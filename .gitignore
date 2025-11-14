@@ -31,3 +31,5 @@ config.toml
 *.temp
 
 .clau*
+
+*.md
