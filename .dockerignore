@@ -1,0 +1,54 @@
+# Build artifacts
+target/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Application data
+storage/
+storage-*/
+certs/
+certs-*/
+config.toml
+config-*.toml
+*.crt
+*.key
+*.pem
+
+# Logs
+*.log
+*.log.*
+
+# Test and benchmark data
+benchmark-results/
+node*/
+uploads/
+
+# Docker
+Dockerfile
+docker-compose.yml
+.dockerignore
+
+# Git
+.git/
+.gitignore
+
+# Documentation (not needed in image)
+*.md
+docs/
+
+# Scripts (not needed in image)
+scripts/
+
+# Examples
+examples/
+
+.clau*

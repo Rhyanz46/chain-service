@@ -1,0 +1,56 @@
+# Example configuration file for Distributed File Transfer System
+# Copy this file to config.toml and modify as needed
+
+[node]
+# Node name (used in certificate Common Name)
+name = "node-1"
+
+# gRPC server listen address
+# Use 0.0.0.0 to listen on all interfaces
+listen_address = "0.0.0.0:50051"
+
+# Path to certificate file (auto-generated if not exists)
+certificate_path = "./certs/node.crt"
+
+# Path to private key file (auto-generated if not exists)
+private_key_path = "./certs/node.key"
+
+[network]
+# Port for P2P gossip network (libp2p)
+p2p_port = 9000
+
+# List of other nodes to connect to initially
+# Example: ["192.168.1.100:9000", "192.168.1.101:9000"]
+bootstrap_nodes = []
+
+# Heartbeat interval in seconds (how often to send keepalive)
+heartbeat_interval = 30
+
+# Node timeout in seconds (consider node stale after this period)
+node_timeout = 300
+
+[storage]
+# Root directory for file storage
+# Files will be organized by client IP: ./storage/192.168.1.100/filename
+root_dir = "./storage"
+
+# Maximum file size in bytes (0 = unlimited)
+# Example: 10737418240 for 10GB limit
+max_file_size = 0
+
+# Chunk size for streaming in bytes
+# Larger chunks = fewer round trips, but more memory usage
+# Default: 1MB (1048576 bytes)
+chunk_size = 1048576
+
+[security]
+# Allow self-signed certificates
+# Set to false for production with proper CA
+allow_self_signed = true
+
+# Certificate validity period in days
+cert_validity_days = 365
+
+# Require mutual TLS authentication
+# Set to false to allow unauthenticated connections (NOT recommended)
+require_mtls = true

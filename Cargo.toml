@@ -1,0 +1,47 @@
+[package]
+name = "uploader"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# Async runtime
+tokio = { version = "1.42", features = ["full"] }
+tokio-stream = "0.1"
+async-stream = "0.3"
+
+# gRPC
+tonic = "0.12"
+prost = "0.13"
+
+# TLS & Crypto
+tokio-rustls = "0.26"
+rustls = "0.23"
+rustls-pemfile = "2.2"
+rcgen = "0.13"
+x509-parser = "0.16"
+ring = "0.17"
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Error handling & utilities
+anyhow = "1.0"
+thiserror = "2.0"
+async-trait = "0.1"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Gossip protocol for distributed registry
+libp2p = { version = "0.54", features = ["gossipsub", "tcp", "noise", "yamux", "mdns"] }
+
+# Additional utilities
+hex = "0.4"
+pem = "3.0"
+clap = { version = "4.5", features = ["derive"] }
+
+[build-dependencies]
+tonic-build = "0.12"

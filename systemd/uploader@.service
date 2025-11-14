@@ -1,0 +1,46 @@
+[Unit]
+Description=Distributed File Transfer Service (Instance %i)
+Documentation=https://github.com/your-username/uploader
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=uploader
+Group=uploader
+
+# Working directory (per instance)
+WorkingDirectory=/var/lib/uploader/%i
+
+# Binary and config paths (per instance)
+ExecStart=/usr/local/bin/uploader --config /etc/uploader/%i/config.toml server
+
+# Restart policy
+Restart=always
+RestartSec=10
+StartLimitInterval=200
+StartLimitBurst=5
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/uploader/%i /var/log/uploader
+
+# Resource limits
+LimitNOFILE=65536
+LimitNPROC=4096
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=uploader-%i
+
+# Environment (per instance)
+EnvironmentFile=-/etc/uploader/%i/environment
+Environment="RUST_LOG=info"
+Environment="RUST_BACKTRACE=1"
+
+[Install]
+WantedBy=multi-user.target

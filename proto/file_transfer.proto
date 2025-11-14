@@ -1,0 +1,141 @@
+syntax = "proto3";
+
+package file_transfer;
+
+// File transfer service with bidirectional streaming
+service FileTransferService {
+  // Upload file to server (client streams chunks to server)
+  rpc UploadFile(stream FileChunk) returns (UploadResponse);
+
+  // Download file from server (server streams chunks to client)
+  rpc DownloadFile(DownloadRequest) returns (stream FileChunk);
+
+  // List files available on server
+  rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
+
+  // Node authentication and handshake
+  rpc Authenticate(AuthRequest) returns (AuthResponse);
+
+  // Health check
+  rpc Ping(PingRequest) returns (PingResponse);
+}
+
+// File chunk for streaming
+message FileChunk {
+  // File metadata (only in first chunk)
+  optional FileMetadata metadata = 1;
+
+  // Chunk data
+  bytes data = 2;
+
+  // Chunk sequence number
+  uint64 chunk_number = 3;
+
+  // Total chunks (only in first chunk)
+  optional uint64 total_chunks = 4;
+}
+
+// File metadata
+message FileMetadata {
+  // Original filename
+  string filename = 1;
+
+  // Total file size in bytes
+  uint64 file_size = 2;
+
+  // MIME type
+  string mime_type = 3;
+
+  // Source IP address (set by server)
+  string source_ip = 4;
+
+  // Upload timestamp
+  int64 timestamp = 5;
+
+  // Checksum (SHA-256)
+  string checksum = 6;
+}
+
+// Upload response
+message UploadResponse {
+  bool success = 1;
+  string message = 2;
+  string file_id = 3;
+  uint64 bytes_received = 4;
+}
+
+// Download request
+message DownloadRequest {
+  string file_id = 1;
+  // Optional: resume from chunk number
+  optional uint64 start_chunk = 2;
+}
+
+// List files request
+message ListFilesRequest {
+  // Optional: filter by source IP
+  optional string source_ip = 1;
+
+  // Pagination
+  uint32 page = 2;
+  uint32 page_size = 3;
+}
+
+// List files response
+message ListFilesResponse {
+  repeated FileInfo files = 1;
+  uint32 total_count = 2;
+}
+
+// File info
+message FileInfo {
+  string file_id = 1;
+  FileMetadata metadata = 2;
+  string storage_path = 3;
+}
+
+// Authentication request
+message AuthRequest {
+  // Node's certificate (PEM format)
+  string certificate = 1;
+
+  // Signature of challenge (proves private key ownership)
+  bytes signature = 2;
+
+  // Node's IP and port
+  string node_address = 3;
+
+  // Timestamp to prevent replay attacks
+  int64 timestamp = 4;
+}
+
+// Authentication response
+message AuthResponse {
+  bool authenticated = 1;
+  string message = 2;
+
+  // Challenge for next authentication
+  bytes challenge = 3;
+
+  // List of known valid nodes (for distributed registry)
+  repeated NodeInfo known_nodes = 4;
+}
+
+// Node information
+message NodeInfo {
+  string node_id = 1;
+  string certificate = 2;
+  string address = 3;
+  int64 last_seen = 4;
+}
+
+// Ping request
+message PingRequest {
+  int64 timestamp = 1;
+}
+
+// Ping response
+message PingResponse {
+  int64 timestamp = 1;
+  string node_id = 2;
+}
