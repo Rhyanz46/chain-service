@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
 use rcgen::{
     BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair,
-    SanType,
+    SanType, PKCS_ED25519,
 };
 use ring::signature;
 use std::net::SocketAddr;
@@ -44,8 +44,8 @@ impl CertificateManager {
             port_extension.as_bytes().to_vec(),
         )];
 
-        // Generate key pair
-        let key_pair = rcgen::KeyPair::generate()?;
+        // Generate Ed25519 key pair
+        let key_pair = rcgen::KeyPair::generate_for(&PKCS_ED25519)?;
 
         // Generate the certificate
         let cert = params.self_signed(&key_pair)
@@ -80,7 +80,7 @@ impl CertificateManager {
         params.not_before = rcgen::date_time_ymd(2024, 1, 1);
         params.not_after = rcgen::date_time_ymd(2030, 12, 31);
 
-        let key_pair = rcgen::KeyPair::generate()?;
+        let key_pair = rcgen::KeyPair::generate_for(&PKCS_ED25519)?;
         let cert = params.self_signed(&key_pair)
             .context("Failed to generate CA certificate")?;
 
