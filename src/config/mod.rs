@@ -18,6 +18,9 @@ pub struct Config {
 
     /// Security configuration
     pub security: SecurityConfig,
+
+    /// Network ID management configuration
+    pub network_ids: NetworkIdConfig,
 }
 
 /// Node configuration
@@ -76,10 +79,60 @@ pub struct SecurityConfig {
 
     /// Require mutual TLS
     pub require_mtls: bool,
+
+    /// Network secret for node authorization (optional, but HIGHLY recommended for production)
+    /// If set, nodes must provide this secret to join the network
+    #[serde(default)]
+    pub network_secret: Option<String>,
 }
+
+/// Network ID management configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NetworkIdConfig {
+    /// Enable network ID management (if false, use auto-generated IDs)
+    pub enabled: bool,
+
+    /// Path to network IDs configuration file
+    pub ids_config_path: PathBuf,
+
+    /// Path to network state database
+    pub state_db_path: PathBuf,
+
+    /// Network ID reservation timeout in seconds
+    #[serde(default = "default_reservation_timeout")]
+    pub reservation_timeout: u64,
+
+    /// Offline threshold in seconds before considering node stale (default: 24 hours)
+    #[serde(default = "default_offline_threshold")]
+    pub offline_threshold: u64,
+
+    /// Cleanup interval in seconds (how often to check for stale nodes)
+    #[serde(default = "default_cleanup_interval")]
+    pub cleanup_interval: u64,
+
+    /// Enable auto-recovery for empty networks
+    #[serde(default = "default_auto_recovery")]
+    pub auto_recovery: bool,
+
+    /// Maximum nodes per network type
+    #[serde(default)]
+    pub max_nodes_per_network: std::collections::HashMap<String, u32>,
+}
+
+// Default values for configuration options
+fn default_reservation_timeout() -> u64 { 300 } // 5 minutes
+fn default_offline_threshold() -> u64 { 86400 } // 24 hours
+fn default_cleanup_interval() -> u64 { 3600 } // 1 hour
+fn default_auto_recovery() -> bool { true }
 
 impl Default for Config {
     fn default() -> Self {
+        let mut max_nodes = std::collections::HashMap::new();
+        max_nodes.insert("MainNet".to_string(), 999);
+        max_nodes.insert("TestNet".to_string(), 99);
+        max_nodes.insert("DevNet".to_string(), 49);
+        max_nodes.insert("CustomNet".to_string(), 99);
+
         Self {
             node: NodeConfig {
                 name: "node-1".to_string(),
@@ -102,6 +155,17 @@ impl Default for Config {
                 allow_self_signed: true,
                 cert_validity_days: 365,
                 require_mtls: true,
+                network_secret: None, // No secret by default (INSECURE - set in production!)
+            },
+            network_ids: NetworkIdConfig {
+                enabled: false, // Disabled by default for backward compatibility
+                ids_config_path: PathBuf::from("./config/network_ids.toml"),
+                state_db_path: PathBuf::from("./data/network_state.json"),
+                reservation_timeout: 300, // 5 minutes
+                offline_threshold: 86400, // 24 hours
+                cleanup_interval: 3600, // 1 hour
+                auto_recovery: true,
+                max_nodes_per_network: max_nodes,
             },
         }
     }
@@ -166,6 +230,18 @@ impl Config {
         if let Some(cert_dir) = self.node.certificate_path.parent() {
             fs::create_dir_all(cert_dir)
                 .context("Failed to create certificate directory")?;
+        }
+
+        // Create network IDs config directory
+        if let Some(ids_dir) = self.network_ids.ids_config_path.parent() {
+            fs::create_dir_all(ids_dir)
+                .context("Failed to create network IDs config directory")?;
+        }
+
+        // Create network state database directory
+        if let Some(db_dir) = self.network_ids.state_db_path.parent() {
+            fs::create_dir_all(db_dir)
+                .context("Failed to create network state database directory")?;
         }
 
         Ok(())

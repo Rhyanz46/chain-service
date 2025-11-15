@@ -18,6 +18,29 @@ service FileTransferService {
 
   // Health check
   rpc Ping(PingRequest) returns (PingResponse);
+
+  // Get network status and list of connected nodes
+  rpc GetNetworkStatus(NetworkStatusRequest) returns (NetworkStatusResponse);
+
+  // Register node in the network (heartbeat)
+  rpc RegisterNode(RegisterNodeRequest) returns (RegisterNodeResponse);
+
+  // ID Management Services
+
+  // Assign node ID for first node (network bootstrap)
+  rpc AssignFirstNodeId(AssignFirstNodeIdRequest) returns (AssignNodeIdResponse);
+
+  // Reserve ID for new node joining network
+  rpc ReserveNodeId(ReserveNodeIdRequest) returns (ReserveNodeIdResponse);
+
+  // Confirm ID reservation and finalize assignment
+  rpc ConfirmIdAssignment(ConfirmIdAssignmentRequest) returns (ConfirmIdAssignmentResponse);
+
+  // Check IP for ID reclamation (returning node)
+  rpc CheckIpReclamation(CheckIpReclamationRequest) returns (CheckIpReclamationResponse);
+
+  // Sync network state between nodes
+  rpc SyncNetworkState(SyncNetworkStateRequest) returns (SyncNetworkStateResponse);
 }
 
 // File chunk for streaming
@@ -138,4 +161,263 @@ message PingRequest {
 message PingResponse {
   int64 timestamp = 1;
   string node_id = 2;
+}
+
+// Network status request
+message NetworkStatusRequest {
+  // Include inactive/stale nodes in response
+  bool include_stale = 1;
+}
+
+// Network status response
+message NetworkStatusResponse {
+  // List of active nodes in the network
+  repeated NodeInfo active_nodes = 1;
+
+  // Total number of nodes (including stale if requested)
+  uint32 total_nodes = 2;
+
+  // This node's information
+  NodeInfo current_node = 3;
+
+  // Network uptime in seconds
+  int64 uptime_seconds = 4;
+}
+
+// Register node request (also used for heartbeat)
+message RegisterNodeRequest {
+  // Node's certificate
+  string certificate = 1;
+
+  // Node address
+  string address = 2;
+
+  // Node ID
+  string node_id = 3;
+
+  // Timestamp
+  int64 timestamp = 4;
+
+  // Network secret for authorization (optional, but recommended)
+  string network_secret = 5;
+}
+
+// Register node response
+message RegisterNodeResponse {
+  bool success = 1;
+  string message = 2;
+
+  // List of other known nodes
+  repeated NodeInfo known_nodes = 3;
+}
+
+// ==================== ID MANAGEMENT MESSAGES ====================
+
+// Assign first node ID request
+message AssignFirstNodeIdRequest {
+  // Requested node ID (must be from predefined list)
+  string requested_id = 1;
+
+  // Node's IP address
+  string ip_address = 2;
+
+  // Network secret for authorization
+  string network_secret = 3;
+
+  // Node certificate for verification
+  string certificate = 4;
+
+  // Request timestamp
+  int64 timestamp = 5;
+}
+
+// Assign node ID response
+message AssignNodeIdResponse {
+  bool success = 1;
+  string message = 2;
+
+  // Assigned node ID
+  string assigned_id = 3;
+
+  // Is this node the bootstrap node?
+  bool is_bootstrap = 4;
+
+  // Network metadata
+  NetworkMetadata metadata = 5;
+}
+
+// Reserve node ID request
+message ReserveNodeIdRequest {
+  // Network type the node wants to join (MainNet, TestNet, DevNet, etc.)
+  string network_type = 1;
+
+  // Node's IP address
+  string ip_address = 2;
+
+  // Network secret for authorization
+  string network_secret = 3;
+
+  // Node certificate for verification
+  string certificate = 4;
+
+  // Request timestamp
+  int64 timestamp = 5;
+}
+
+// Reserve node ID response
+message ReserveNodeIdResponse {
+  bool success = 1;
+  string message = 2;
+
+  // Reserved node ID
+  string reserved_id = 3;
+
+  // Reservation expiration time (unix timestamp)
+  int64 expires_at = 4;
+
+  // Reservation timeout in seconds
+  int64 timeout_seconds = 5;
+}
+
+// Confirm ID assignment request
+message ConfirmIdAssignmentRequest {
+  // Reserved ID from previous step
+  string reserved_id = 1;
+
+  // Node's IP address
+  string ip_address = 2;
+
+  // Certificate fingerprint for verification
+  string certificate_fingerprint = 3;
+
+  // Request timestamp
+  int64 timestamp = 4;
+}
+
+// Confirm ID assignment response
+message ConfirmIdAssignmentResponse {
+  bool success = 1;
+  string message = 2;
+
+  // Final assigned node ID
+  string node_id = 3;
+
+  // Node assignment info
+  NodeAssignment assignment_info = 4;
+}
+
+// Check IP reclamation request
+message CheckIpReclamationRequest {
+  // Node's IP address
+  string ip_address = 2;
+
+  // Network secret for authorization
+  string network_secret = 3;
+
+  // Request timestamp
+  int64 timestamp = 4;
+}
+
+// Check IP reclamation response
+message CheckIpReclamationResponse {
+  bool success = 1;
+  string message = 2;
+
+  // Available old ID (if any)
+  string old_id = 3;
+
+  // Can reclaim old ID?
+  bool can_reclaim = 4;
+
+  // How long the node has been offline (seconds)
+  int64 offline_duration_seconds = 5;
+}
+
+// Sync network state request
+message SyncNetworkStateRequest {
+  // Node's current assignments count
+  uint32 assignments_count = 1;
+
+  // Node's last sync timestamp
+  int64 last_sync_timestamp = 2;
+
+  // Network secret for authorization
+  string network_secret = 3;
+
+  // Request timestamp
+  int64 timestamp = 4;
+}
+
+// Sync network state response
+message SyncNetworkStateResponse {
+  bool success = 1;
+  string message = 2;
+
+  // Full list of current assignments
+  repeated NodeAssignment assignments = 3;
+
+  // Current network metadata
+  NetworkMetadata metadata = 4;
+
+  // Nodes that need to be cleaned up (offline > 24h)
+  repeated string stale_nodes = 5;
+}
+
+// ==================== SUPPORTING MESSAGES ====================
+
+// Network metadata
+message NetworkMetadata {
+  // Network creation time
+  int64 created_at = 1;
+
+  // Last update time
+  int64 last_updated = 2;
+
+  // Total nodes that have ever joined
+  uint64 total_nodes_joined = 3;
+
+  // Network version
+  string version = 4;
+
+  // Bootstrap node ID (first node)
+  string bootstrap_node = 5;
+}
+
+// Node assignment information
+message NodeAssignment {
+  // Node ID
+  string node_id = 1;
+
+  // Node IP address
+  string ip_address = 2;
+
+  // Assignment timestamp
+  int64 assigned_at = 3;
+
+  // Last seen timestamp
+  int64 last_seen = 4;
+
+  // Certificate fingerprint
+  string certificate_fingerprint = 5;
+
+  // Network type
+  string network_type = 6;
+}
+
+// ID reservation information
+message IdReservation {
+  // Reserved ID
+  string reserved_id = 1;
+
+  // IP address that made the reservation
+  string reserved_by = 2;
+
+  // Reservation timestamp
+  int64 reserved_at = 3;
+
+  // Expiration timestamp
+  int64 expires_at = 4;
+
+  // Network type
+  string network_type = 5;
 }

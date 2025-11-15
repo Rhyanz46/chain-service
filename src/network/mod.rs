@@ -1,8 +1,10 @@
 pub mod client;
 pub mod server;
+pub mod id_manager;
 
 pub use client::FileTransferClient;
 pub use server::FileTransferServer;
+pub use id_manager::NetworkIdManager;
 
 use anyhow::Result;
 use std::path::Path;

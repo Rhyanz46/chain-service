@@ -1,0 +1,36 @@
+[node]
+name = "node-1"
+listen_address = "0.0.0.0:50051"
+certificate_path = "./certs/node.crt"
+private_key_path = "./certs/node.key"
+
+[network]
+p2p_port = 9000
+bootstrap_nodes = []
+heartbeat_interval = 30
+node_timeout = 300
+
+[storage]
+root_dir = "./storage"
+max_file_size = 0
+chunk_size = 1048576
+
+[security]
+allow_self_signed = true
+cert_validity_days = 365
+require_mtls = true
+
+[network_ids]
+enabled = false
+ids_config_path = "./config/network_ids.toml"
+state_db_path = "./data/network_state.json"
+reservation_timeout = 300
+offline_threshold = 86400
+cleanup_interval = 3600
+auto_recovery = true
+
+[network_ids.max_nodes_per_network]
+TestNet = 99
+CustomNet = 99
+DevNet = 49
+MainNet = 999

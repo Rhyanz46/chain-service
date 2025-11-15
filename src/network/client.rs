@@ -278,6 +278,24 @@ impl FileTransferClient {
         Ok(ping_response.node_id)
     }
 
+    /// Get network status and list of connected nodes
+    pub async fn get_network_status(
+        &self,
+        client: &mut FileTransferServiceClient<Channel>,
+        include_stale: bool,
+    ) -> Result<crate::grpc::file_transfer::NetworkStatusResponse> {
+        let mut request = Request::new(crate::grpc::file_transfer::NetworkStatusRequest {
+            include_stale,
+        });
+
+        // Add certificate to metadata
+        let cert_value = MetadataValue::try_from(&self.identity.certificate_pem)?;
+        request.metadata_mut().insert("x-certificate", cert_value);
+
+        let response = client.get_network_status(request).await?;
+        Ok(response.into_inner())
+    }
+
     /// Upload file to multiple servers concurrently
     pub async fn upload_to_multiple(
         &self,

@@ -7,9 +7,11 @@ Backend service untuk upload dan receive file besar antar VPS dengan authenticat
 - **Streaming File Transfer**: gRPC bidirectional streaming untuk transfer file besar yang efisien
 - **Blockchain-based Authentication**: Custom PKI dengan certificate chain yang mengandung IP dan port
 - **Distributed Registry**: Gossip protocol (libp2p) untuk distributed key registry antar node
+- **Network Monitoring**: Real-time tracking semua nodes yang connected di network chain
 - **Concurrent Operations**: Upload ke multiple servers dan receive dari multiple clients secara bersamaan
 - **IP-based Storage**: File disimpan dengan folder structure berdasarkan client IP
 - **Peer-to-Peer Network**: Setiap node bisa menjadi client atau server
+- **Auto Node Discovery**: Automatic discovery dan registration nodes baru
 
 ## Architecture
 
@@ -157,6 +159,38 @@ cargo run -- download \
 ```bash
 cargo run -- ping --server 192.168.1.100:50051
 ```
+
+### 8. List Connected Nodes
+
+Lihat semua nodes yang connected di network chain:
+
+```bash
+# List active nodes
+cargo run -- list-nodes --server 192.168.1.100:50051
+
+# Include inactive/stale nodes
+cargo run -- list-nodes --server 192.168.1.100:50051 --include-stale
+```
+
+Output:
+```
+╔═══════════════════════════════════════════════════════════════╗
+║               NETWORK STATUS - CONNECTED NODES                ║
+╠═══════════════════════════════════════════════════════════════╣
+║ Total Nodes: 3                                                ║
+║ Current Node: a3f4c2b1d5e8...                                 ║
+║ Address: 192.168.1.100:50051                                  ║
+╠═══════════════════════════════════════════════════════════════╣
+║                      ACTIVE NODES                             ║
+╠═══════════════════════════════════════════════════════════════╣
+║ Node #1                                                       ║
+║ ├─ ID:      a3f4c2b1...                                       ║
+║ ├─ Address: 192.168.1.100:50051                              ║
+║ └─ Last Seen: 2024-01-15 10:30:45 UTC                        ║
+╚═══════════════════════════════════════════════════════════════╝
+```
+
+Lihat [NETWORK.md](NETWORK.md) untuk detail lengkap network monitoring.
 
 ## Configuration
 

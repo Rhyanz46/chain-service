@@ -54,3 +54,86 @@ cert_validity_days = 365
 # Require mutual TLS authentication
 # Set to false to allow unauthenticated connections (NOT recommended)
 require_mtls = true
+
+# Network secret for node authorization (HIGHLY RECOMMENDED!)
+# If set, nodes must provide this secret to join the network
+# This prevents unauthorized nodes from joining
+#
+# ⚠️  SECURITY WARNING: Leaving this unset allows ANYONE to join your network!
+# ⚠️  For production, ALWAYS set a strong random secret!
+#
+# Generate a strong secret with: openssl rand -hex 32
+# Or use any long random string
+#
+# Uncomment and set for production:
+# network_secret = "your-super-secret-passphrase-change-me-now-use-openssl-rand-hex-32"
+#
+# Example:
+# network_secret = "a3f4c2b1d5e8f9a2b4c6d8e1f3a5b7c9d2e4f6a8b1c3d5e7f9a2b4c6d8e1f3a5"
+
+[network_ids]
+# Enable network ID management system
+# If false, nodes will use auto-generated IDs (backward compatible mode)
+enabled = false
+
+# Path to network IDs configuration file
+ids_config_path = "./config/network_ids.toml"
+
+# Path to network state database (persistent storage)
+state_db_path = "./data/network_state.json"
+
+# ID reservation timeout in seconds (5 minutes by default)
+# If a node reserves an ID but doesn't complete joining within this time, ID is released
+reservation_timeout = 300
+
+# Offline threshold in seconds (24 hours by default)
+# Nodes offline for longer than this will be removed from the network
+offline_threshold = 86400
+
+# Cleanup interval in seconds (1 hour by default)
+# How often the system checks for stale nodes and expired reservations
+cleanup_interval = 3600
+
+# Enable auto-recovery for empty networks
+# When true, first node can automatically restart an empty network
+auto_recovery = true
+
+# Maximum nodes per network type
+[network_ids.max_nodes_per_network]
+MainNet = 999   # Production network
+TestNet = 99    # Testing network
+DevNet = 49     # Development network
+CustomNet = 99  # Custom networks
+
+# 📝 NETWORK ID MANAGEMENT SETUP GUIDE:
+#
+# 1. ENABLE THE SYSTEM:
+#    Set `enabled = true` to use the new ID management system
+#
+# 2. GENERATE NETWORK SECRET:
+#    Use the same `network_secret` for all nodes in your network
+#    openssl rand -hex 32
+#
+# 3. CHOOSE FIRST NODE:
+#    The first node to start will be the bootstrap node
+#    It can choose any ID from the predefined list in network_ids.toml
+#
+# 4. NODE JOIN PROCESS:
+#    - First node: Picks any available ID from the pool
+#    - Other nodes: Must request ID reservation, then confirm assignment
+#    - All nodes: Must provide valid network secret
+#
+# 5. IP RECLAMATION:
+#    - Nodes offline > 24h are removed
+#    - Returning nodes can reclaim old IDs if still available
+#    - IP verification prevents spoofing
+#
+# 6. NETWORK RECOVERY:
+#    If all nodes go offline, any node can restart the network
+#    The system automatically detects empty network state
+#
+# ⚠️ SECURITY NOTES:
+# - Always use a strong network_secret in production
+# - Keep network_ids.toml secure (defines allowed IDs)
+# - Monitor network state for unauthorized nodes
+# - Regular backups of network_state.json recommended

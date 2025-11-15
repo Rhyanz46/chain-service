@@ -1,6 +1,8 @@
 pub mod file_manager;
+pub mod network_db;
 
 pub use file_manager::FileManager;
+pub use network_db::NetworkDatabase;
 
 use anyhow::Result;
 use std::path::PathBuf;

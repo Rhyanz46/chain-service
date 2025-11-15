@@ -1,0 +1,60 @@
+# Predefined Network IDs for Distributed File Transfer System
+# Node pertama bisa memilih ID dari daftar ini untuk memulai jaringan
+
+# Format: ID = "NetworkName-NodeNumber"
+# Contoh: MainNet-001, TestNet-015, DevNet-042
+
+[available_ids]
+# Main Network IDs (1-999)
+MainNet-001 = { description = "Main network primary node", reserved = false }
+MainNet-002 = { description = "Main network secondary node", reserved = false }
+MainNet-003 = { description = "Main network tertiary node", reserved = false }
+MainNet-004 = { description = "Main network quaternary node", reserved = false }
+MainNet-005 = { description = "Main network quinary node", reserved = false }
+
+# Test Network IDs (1-99)
+TestNet-001 = { description = "Test network node 1", reserved = false }
+TestNet-002 = { description = "Test network node 2", reserved = false }
+TestNet-003 = { description = "Test network node 3", reserved = false }
+TestNet-004 = { description = "Test network node 4", reserved = false }
+TestNet-005 = { description = "Test network node 5", reserved = false }
+
+# Development Network IDs (1-49)
+DevNet-001 = { description = "Development network node 1", reserved = false }
+DevNet-002 = { description = "Development network node 2", reserved = false }
+DevNet-003 = { description = "Development network node 3", reserved = false }
+DevNet-004 = { description = "Development network node 4", reserved = false }
+DevNet-005 = { description = "Development network node 5", reserved = false }
+
+# Special Purpose IDs
+Bootstrap-001 = { description = "Bootstrap seed node", reserved = false }
+Gateway-001 = { description = "Network gateway node", reserved = false }
+Storage-001 = { description = "Primary storage node", reserved = false }
+Storage-002 = { description = "Secondary storage node", reserved = false }
+
+# Custom Network IDs (untuk jaringan spesifik)
+# Format: CustomNet-XXX dimana XXX adalah nomor unik
+# CustomNet-001 = { description = "Custom network node", reserved = false }
+
+[network_settings]
+# Minimum node ID length
+min_id_length = 8
+
+# Maximum node ID length
+max_id_length = 32
+
+# ID format validation regex (optional)
+# Jika tidak diset, ID akan divalidasi dengan format standar
+id_format_regex = "^[A-Za-z0-9_-]+$"
+
+# Maximum nodes per network type
+max_nodes_per_network = {
+    MainNet = 999
+    TestNet = 99
+    DevNet = 49
+    CustomNet = 99
+}
+
+# ID reservation timeout dalam detik
+# Jika node melakukan reserve ID tapi tidak connect dalam timeout ini, ID akan dilepas kembali
+id_reservation_timeout = 300

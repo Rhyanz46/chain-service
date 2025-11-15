@@ -121,6 +121,17 @@ enum Commands {
         #[arg(short, long)]
         server: String,
     },
+
+    /// List all connected nodes in the network
+    ListNodes {
+        /// Server address to query
+        #[arg(short, long)]
+        server: String,
+
+        /// Include inactive/stale nodes
+        #[arg(long)]
+        include_stale: bool,
+    },
 }
 
 #[tokio::main]
@@ -190,6 +201,14 @@ async fn main() -> Result<()> {
             let config = Config::from_file(&cli.config)?;
             ping_server(&config, &server).await?;
         }
+
+        Commands::ListNodes {
+            server,
+            include_stale,
+        } => {
+            let config = Config::from_file(&cli.config)?;
+            list_nodes(&config, &server, include_stale).await?;
+        }
     }
 
     Ok(())
@@ -255,14 +274,29 @@ async fn run_server(config: Config) -> Result<()> {
 
     distributed_registry.initialize(config.network.p2p_port).await?;
 
-    // Start the gRPC server
-    let server = FileTransferServer::new(
-        config.node.listen_address,
-        file_manager,
-        certificate_validator,
-        node_registry.clone(),
-        identity.clone(),
-    );
+    // Start the gRPC server (with or without ID management)
+    let server = if config.network_ids.enabled {
+        info!("Starting server with ID management enabled");
+        FileTransferServer::new_with_id_management(
+            config.node.listen_address,
+            file_manager,
+            certificate_validator,
+            node_registry.clone(),
+            identity.clone(),
+            config.security.clone(),
+            config.network_ids.clone(),
+        ).await?
+    } else {
+        info!("Starting server in legacy mode (ID management disabled)");
+        FileTransferServer::new(
+            config.node.listen_address,
+            file_manager,
+            certificate_validator,
+            node_registry.clone(),
+            identity.clone(),
+            config.security.clone(),
+        )
+    };
 
     // Spawn server task
     let server_task = tokio::spawn(async move {
@@ -416,6 +450,50 @@ async fn ping_server(config: &Config, server: &str) -> Result<()> {
     let node_id = client.ping(&mut grpc_client).await?;
 
     info!("Pong from node: {}", node_id);
+
+    Ok(())
+}
+
+async fn list_nodes(config: &Config, server: &str, include_stale: bool) -> Result<()> {
+    info!("Fetching network status from {}", server);
+
+    let identity = load_or_generate_identity(config).await?;
+    let client = FileTransferClient::new(identity, config.storage.chunk_size);
+
+    let mut grpc_client = client.connect(server).await?;
+    let status = client.get_network_status(&mut grpc_client, include_stale).await?;
+
+    println!("\n╔═══════════════════════════════════════════════════════════════╗");
+    println!("║               NETWORK STATUS - CONNECTED NODES                ║");
+    println!("╠═══════════════════════════════════════════════════════════════╣");
+    println!("║ Total Nodes: {:47} ║", status.total_nodes);
+
+    if let Some(current) = &status.current_node {
+        println!("║ Current Node: {:46} ║", current.node_id);
+        println!("║ Address: {:51} ║", current.address);
+    }
+
+    println!("╠═══════════════════════════════════════════════════════════════╣");
+    println!("║                      ACTIVE NODES                             ║");
+    println!("╠═══════════════════════════════════════════════════════════════╣");
+
+    if status.active_nodes.is_empty() {
+        println!("║ No active nodes found                                         ║");
+    } else {
+        for (idx, node) in status.active_nodes.iter().enumerate() {
+            println!("║                                                               ║");
+            println!("║ Node #{:<2}                                                    ║", idx + 1);
+            println!("║ ├─ ID:      {:<48} ║", node.node_id);
+            println!("║ ├─ Address: {:<48} ║", node.address);
+
+            let last_seen = chrono::DateTime::from_timestamp(node.last_seen, 0)
+                .map(|dt| dt.format("%Y-%m-%d %H:%M:%S UTC").to_string())
+                .unwrap_or_else(|| "Unknown".to_string());
+            println!("║ └─ Last Seen: {:<46} ║", last_seen);
+        }
+    }
+
+    println!("╚═══════════════════════════════════════════════════════════════╝\n");
 
     Ok(())
 }
