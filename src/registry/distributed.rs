@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::time::interval;
@@ -11,6 +10,7 @@ use crate::pki::CertificateValidator;
 /// Distributed registry using gossip protocol
 /// NOTE: This is a simplified version. Full P2P functionality with libp2p
 /// can be added in future versions.
+#[allow(dead_code)]
 pub struct DistributedRegistry {
     node_registry: NodeRegistry,
     certificate_validator: CertificateValidator,
@@ -19,6 +19,7 @@ pub struct DistributedRegistry {
     heartbeat_interval: Duration,
 }
 
+#[allow(dead_code)]
 impl DistributedRegistry {
     /// Create a new distributed registry
     pub fn new(

@@ -1,10 +1,9 @@
-use std::net::{IpAddr, SocketAddr};
+use std::net::IpAddr;
 use std::pin::Pin;
 use std::sync::Arc;
-use tokio::sync::Mutex;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 use super::file_transfer::{
     file_transfer_service_server::FileTransferService, AuthRequest, AuthResponse, DownloadRequest,
@@ -13,7 +12,7 @@ use super::file_transfer::{
 };
 use crate::pki::{CertificateManager, CertificateValidator, NodeIdentity};
 use crate::registry::NodeRegistry;
-use crate::storage::{FileManager, FileMetadata};
+use crate::storage::FileManager;
 
 type ResponseStream = Pin<Box<dyn Stream<Item = Result<FileChunk, Status>> + Send>>;
 

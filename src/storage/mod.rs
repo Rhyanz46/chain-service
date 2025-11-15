@@ -1,6 +1,6 @@
 pub mod file_manager;
 
-pub use file_manager::{FileManager, FileMetadata, StoredFile};
+pub use file_manager::FileManager;
 
 use anyhow::Result;
 use std::path::PathBuf;

@@ -2,7 +2,7 @@ use anyhow::{Context, Result};
 use ring::digest;
 use serde::{Deserialize, Serialize};
 use std::net::IpAddr;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::fs::{self, File};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tracing::{debug, info};
@@ -215,6 +215,7 @@ impl FileManager {
     }
 
     /// Delete a file
+    #[allow(dead_code)]
     pub async fn delete_file(&self, file_id: &str, source_ip: &IpAddr) -> Result<()> {
         let metadata = self.load_metadata(source_ip, file_id).await?;
         let storage_path = self.get_storage_path(source_ip, file_id, &metadata.filename);
@@ -236,6 +237,7 @@ impl FileManager {
     }
 
     /// Get storage statistics
+    #[allow(dead_code)]
     pub async fn get_stats(&self) -> Result<StorageStats> {
         let mut total_files = 0;
         let mut total_size = 0u64;
@@ -255,6 +257,7 @@ impl FileManager {
 }
 
 /// File writer for streaming writes
+#[allow(dead_code)]
 pub struct FileWriter {
     pub file_id: String,
     filename: String,
@@ -268,6 +271,7 @@ pub struct FileWriter {
     hasher: ring::digest::Context,
 }
 
+#[allow(dead_code)]
 impl FileWriter {
     /// Write a chunk of data
     pub async fn write_chunk(&mut self, data: &[u8]) -> Result<usize> {
@@ -316,6 +320,7 @@ impl FileWriter {
 }
 
 /// File reader for streaming reads
+#[allow(dead_code)]
 pub struct FileReader {
     pub file_id: String,
     pub metadata: FileMetadata,
@@ -324,6 +329,7 @@ pub struct FileReader {
     chunk_size: usize,
 }
 
+#[allow(dead_code)]
 impl FileReader {
     /// Read the next chunk
     pub async fn read_chunk(&mut self) -> Result<Option<Vec<u8>>> {
@@ -354,6 +360,7 @@ impl FileReader {
 }
 
 /// Storage statistics
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StorageStats {
     pub total_files: usize,

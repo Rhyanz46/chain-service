@@ -1,10 +1,9 @@
 pub mod certificate;
 pub mod validator;
 
-pub use certificate::{CertificateManager, NodeCertificate};
+pub use certificate::CertificateManager;
 pub use validator::CertificateValidator;
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
@@ -42,6 +41,7 @@ impl NodeIdentity {
     }
 
     /// Get the node ID
+    #[allow(dead_code)]
     pub fn id(&self) -> &str {
         &self.node_id
     }

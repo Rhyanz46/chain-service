@@ -4,11 +4,11 @@ pub mod node_registry;
 pub use distributed::DistributedRegistry;
 pub use node_registry::{NodeRegistry, NodeInfo};
 
-use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::net::SocketAddr;
 
 /// Registry message types for gossip protocol
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum RegistryMessage {
     /// Announce a new node joining the network
@@ -48,6 +48,7 @@ pub enum RegistryMessage {
 }
 
 /// Registry event for notifications
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub enum RegistryEvent {
     NodeJoined(NodeInfo),

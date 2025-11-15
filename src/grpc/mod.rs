@@ -6,5 +6,4 @@ pub mod file_transfer {
 
 pub mod service;
 
-pub use file_transfer::*;
 pub use service::FileTransferServiceImpl;

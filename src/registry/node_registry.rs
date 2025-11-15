@@ -15,6 +15,7 @@ pub struct NodeInfo {
     pub joined_at: i64,
 }
 
+#[allow(dead_code)]
 impl NodeInfo {
     pub fn new(node_id: String, certificate: String, address: SocketAddr) -> Self {
         let now = SystemTime::now()
@@ -54,6 +55,7 @@ pub struct NodeRegistry {
     stale_timeout_seconds: i64,
 }
 
+#[allow(dead_code)]
 impl NodeRegistry {
     /// Create a new node registry
     pub fn new(stale_timeout_seconds: i64) -> Self {

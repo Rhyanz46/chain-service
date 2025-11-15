@@ -1,11 +1,10 @@
 use anyhow::{Context, Result};
 use rcgen::{
-    BasicConstraints, Certificate, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair,
+    BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair,
     SanType, PKCS_ED25519,
 };
 use ring::signature;
 use std::net::SocketAddr;
-use std::time::SystemTime;
 
 /// Certificate manager for generating and managing node certificates
 pub struct CertificateManager;
@@ -68,6 +67,7 @@ impl CertificateManager {
     }
 
     /// Generate a CA certificate that can sign other certificates
+    #[allow(dead_code)]
     pub fn generate_ca_certificate(ca_name: &str) -> Result<NodeCertificate> {
         let mut params = CertificateParams::default();
 

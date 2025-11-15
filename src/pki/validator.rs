@@ -35,6 +35,7 @@ impl CertificateValidator {
     }
 
     /// Remove a trusted certificate
+    #[allow(dead_code)]
     pub fn remove_trusted_certificate(&self, certificate_pem: &str) -> Result<()> {
         let fingerprint = Self::calculate_fingerprint(certificate_pem)?;
         let mut trusted = self
@@ -124,6 +125,7 @@ impl CertificateValidator {
     }
 
     /// Get list of all trusted certificate fingerprints
+    #[allow(dead_code)]
     pub fn get_trusted_fingerprints(&self) -> Result<Vec<String>> {
         let trusted = self
             .trusted_certs
@@ -154,6 +156,7 @@ impl CertificateValidator {
     }
 
     /// Clear all trusted certificates
+    #[allow(dead_code)]
     pub fn clear_trusted_certificates(&self) -> Result<()> {
         let mut trusted = self
             .trusted_certs
@@ -164,6 +167,7 @@ impl CertificateValidator {
     }
 
     /// Get count of trusted certificates
+    #[allow(dead_code)]
     pub fn trusted_count(&self) -> Result<usize> {
         let trusted = self
             .trusted_certs
