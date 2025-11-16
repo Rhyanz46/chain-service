@@ -7,10 +7,11 @@ mod storage;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tokio::time::{interval, Duration};
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use tracing_subscriber;
 
 use config::Config;
@@ -19,28 +20,39 @@ use pki::{CertificateManager, CertificateValidator, NodeIdentity};
 use registry::{DistributedRegistry, NodeRegistry};
 use storage::{FileManager, StorageConfig};
 
+/// Get system config file path
+fn get_system_config_path() -> PathBuf {
+    PathBuf::from("/etc/uploader/config.toml")
+}
+
+/// Get development config file path (fallback)
+fn get_dev_config_path() -> PathBuf {
+    PathBuf::from("config.toml")
+}
+
 /// Discover config file with priority order
 fn discover_config(cli_path: Option<PathBuf>) -> PathBuf {
-    // Priority 1: CLI specified path
+    // Priority 1: CLI specified path (for development override)
     if let Some(path) = cli_path {
+        warn!("Using custom config path: {}", path.display());
         return path;
     }
 
-    // Priority 2: Current directory config.toml
-    let local_config = PathBuf::from("config.toml");
-    if local_config.exists() {
-        return local_config;
-    }
-
-    // Priority 3: System config /etc/uploader/config.toml
-    let system_config = PathBuf::from("/etc/uploader/config.toml");
+    // Priority 2: System config /etc/uploader/config.toml (production default)
+    let system_config = get_system_config_path();
     if system_config.exists() {
         return system_config;
     }
 
-    // Priority 4: Fallback to creating config.toml in current directory
-    // This allows users to run without system-wide installation
-    local_config
+    // Priority 3: Development config ./config.toml (development fallback)
+    let dev_config = get_dev_config_path();
+    if dev_config.exists() {
+        warn!("Using development config: {}", dev_config.display());
+        return dev_config;
+    }
+
+    // No config found - will create system config by default
+    system_config
 }
 
 #[derive(Parser)]
@@ -80,12 +92,8 @@ enum Commands {
         key_out: PathBuf,
     },
 
-    /// Initialize default configuration
-    InitConfig {
-        /// Output config file
-        #[arg(short, long, default_value = "config.toml")]
-        output: PathBuf,
-    },
+    /// Edit system configuration interactively
+    EditConfig,
 
     /// Start the server
     Server,
@@ -181,15 +189,14 @@ async fn main() -> Result<()> {
             generate_certificate(&name, &address, &cert_out, &key_out).await?;
         }
 
-        Commands::InitConfig { output } => {
-            Config::create_default(&output)?;
-            info!("Created default configuration at {}", output.display());
+        Commands::EditConfig => {
+            edit_config_interactively().await?;
         }
 
         Commands::Server => {
             let config_path = discover_config(cli.config);
             let config = Config::from_file(&config_path)
-                .context("Failed to load config. Run 'uploader init-config' first")?;
+                .context("Failed to load config. Run 'uploader edit-config' first")?;
 
             run_server(config).await?;
         }
@@ -576,6 +583,280 @@ async fn load_or_generate_identity(config: &Config) -> Result<NodeIdentity> {
             Some(cert.private_key_pem),
         ))
     }
+}
+
+async fn edit_config_interactively() -> Result<()> {
+    let config_path = get_system_config_path();
+
+    println!("🔧 Interactive Configuration Editor");
+    println!("================================");
+    println!("Config file: {}", config_path.display());
+    println!();
+
+    // Check if config exists
+    let mut config = if config_path.exists() {
+        println!("📄 Loading existing configuration...");
+        Config::from_file(&config_path)
+            .context("Failed to load existing config")?
+    } else {
+        println!("📄 No existing config found. Creating default configuration...");
+        Config::default()
+    };
+
+    println!();
+
+    // Edit node configuration
+    println!("🖥️  Node Configuration");
+    println!("---------------------");
+    println!("Current node name: {}", config.node.name);
+    print!("Enter node name [{}]: ", config.node.name);
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    if !input.is_empty() {
+        config.node.name = input.to_string();
+    }
+
+    println!("Current listen address: {}", config.node.listen_address);
+    print!("Enter listen address [{}]: ", config.node.listen_address);
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    if !input.is_empty() {
+        match input.parse() {
+            Ok(addr) => config.node.listen_address = addr,
+            Err(_) => println!("⚠️  Invalid address format, keeping current value"),
+        }
+    }
+
+    println!();
+
+    // Edit network configuration
+    println!("🌐 Network Configuration");
+    println!("------------------------");
+    println!("Current P2P port: {}", config.network.p2p_port);
+    print!("Enter P2P port [{}]: ", config.network.p2p_port);
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    if !input.is_empty() {
+        match input.parse() {
+            Ok(port) => config.network.p2p_port = port,
+            Err(_) => println!("⚠️  Invalid port number, keeping current value"),
+        }
+    }
+
+    println!("Current bootstrap nodes: {:?}", config.network.bootstrap_nodes);
+    print!("Enter bootstrap nodes (comma-separated, blank for none): ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    if !input.is_empty() {
+        config.network.bootstrap_nodes = input
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+    }
+
+    println!();
+
+    // Edit security configuration
+    println!("🔒 Security Configuration");
+    println!("------------------------");
+
+    // Network secret - always ask this for security
+    if let Some(ref secret) = config.security.network_secret {
+        println!("Current network secret: [REDACTED]");
+    } else {
+        println!("Current network secret: [NOT SET - INSECURE!]");
+    }
+
+    print!("Enter network secret (required for production): ");
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    if !input.is_empty() {
+        config.security.network_secret = if input == "NONE" {
+            None
+        } else {
+            Some(input.to_string())
+        };
+    } else if config.security.network_secret.is_none() {
+        println!("⚠️  WARNING: No network secret set - this is insecure for production!");
+    }
+
+    println!("Current allow self-signed certificates: {}", config.security.allow_self_signed);
+    print!("Allow self-signed certificates? (y/n) [{}]: ",
+        if config.security.allow_self_signed { "y" } else { "n" });
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim().to_lowercase();
+    if !input.is_empty() {
+        config.security.allow_self_signed = matches!(input.as_str(), "y" | "yes" | "true" | "1");
+    }
+
+    println!("Current require mTLS: {}", config.security.require_mtls);
+    print!("Require mutual TLS? (y/n) [{}]: ",
+        if config.security.require_mtls { "y" } else { "n" });
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim().to_lowercase();
+    if !input.is_empty() {
+        config.security.require_mtls = matches!(input.as_str(), "y" | "yes" | "true" | "1");
+    }
+
+    println!();
+
+    // Edit ID management configuration
+    println!("🆔 ID Management Configuration");
+    println!("-----------------------------");
+    println!("Current enabled: {}", config.network_ids.enabled);
+    print!("Enable ID management? (y/n) [{}]: ",
+        if config.network_ids.enabled { "y" } else { "n" });
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim().to_lowercase();
+    if !input.is_empty() {
+        config.network_ids.enabled = matches!(input.as_str(), "y" | "yes" | "true" | "1");
+    }
+
+    println!();
+
+    // Edit storage configuration
+    println!("💾 Storage Configuration");
+    println!("------------------------");
+    println!("Current storage root: {}", config.storage.root_dir.display());
+    print!("Enter storage root directory [{}]: ", config.storage.root_dir.display());
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    if !input.is_empty() {
+        config.storage.root_dir = PathBuf::from(input);
+    }
+
+    println!("Current chunk size: {} bytes", config.storage.chunk_size);
+    print!("Enter chunk size in bytes [{}]: ", config.storage.chunk_size);
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    if !input.is_empty() {
+        match input.parse() {
+            Ok(size) => {
+                if size > 0 {
+                    config.storage.chunk_size = size;
+                } else {
+                    println!("⚠️  Chunk size must be greater than 0");
+                }
+            },
+            Err(_) => println!("⚠️  Invalid number, keeping current value"),
+        }
+    }
+
+    println!();
+
+    // Certificate paths
+    println!("📜 Certificate Configuration");
+    println!("---------------------------");
+    println!("Current certificate path: {}", config.node.certificate_path.display());
+    print!("Enter certificate path [{}]: ", config.node.certificate_path.display());
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    if !input.is_empty() {
+        config.node.certificate_path = PathBuf::from(input);
+    }
+
+    println!("Current private key path: {}", config.node.private_key_path.display());
+    print!("Enter private key path [{}]: ", config.node.private_key_path.display());
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim();
+    if !input.is_empty() {
+        config.node.private_key_path = PathBuf::from(input);
+    }
+
+    println!();
+
+    // Show final configuration summary
+    println!("📋 Configuration Summary");
+    println!("========================");
+    println!("Node name: {}", config.node.name);
+    println!("Listen address: {}", config.node.listen_address);
+    println!("P2P port: {}", config.network.p2p_port);
+    println!("Bootstrap nodes: {:?}", config.network.bootstrap_nodes);
+    println!("Network secret: {}",
+        if config.security.network_secret.is_some() { "[SET]" } else { "[NOT SET - INSECURE!]" });
+    println!("Allow self-signed: {}", config.security.allow_self_signed);
+    println!("Require mTLS: {}", config.security.require_mtls);
+    println!("ID management enabled: {}", config.network_ids.enabled);
+    println!("Storage root: {}", config.storage.root_dir.display());
+    println!("Chunk size: {} bytes", config.storage.chunk_size);
+    println!("Certificate path: {}", config.node.certificate_path.display());
+    println!("Private key path: {}", config.node.private_key_path.display());
+    println!();
+
+    print!("Save this configuration to {}? (y/n): ", config_path.display());
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim().to_lowercase();
+
+    if matches!(input.as_str(), "y" | "yes" | "true" | "1") {
+        // Ensure parent directory exists
+        if let Some(parent) = config_path.parent() {
+            tokio::fs::create_dir_all(parent).await
+                .context("Failed to create config directory")?;
+        }
+
+        config.to_file(&config_path)
+            .context("Failed to save configuration")?;
+
+        println!("✅ Configuration saved to {}", config_path.display());
+
+        // Validate and ensure directories
+        if let Err(e) = config.validate() {
+            println!("⚠️  Configuration validation warning: {}", e);
+        }
+
+        if let Err(e) = config.ensure_directories() {
+            println!("⚠️  Directory creation warning: {}", e);
+        } else {
+            println!("✅ Configuration directories ensured");
+        }
+
+        println!("🎉 Configuration setup complete!");
+        println!("💡 You can now start the server with: uploader server");
+    } else {
+        println!("❌ Configuration not saved");
+    }
+
+    Ok(())
 }
 
 fn format_size(size: u64) -> String {
