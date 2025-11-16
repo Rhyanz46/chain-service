@@ -19,6 +19,30 @@ use pki::{CertificateManager, CertificateValidator, NodeIdentity};
 use registry::{DistributedRegistry, NodeRegistry};
 use storage::{FileManager, StorageConfig};
 
+/// Discover config file with priority order
+fn discover_config(cli_path: Option<PathBuf>) -> PathBuf {
+    // Priority 1: CLI specified path
+    if let Some(path) = cli_path {
+        return path;
+    }
+
+    // Priority 2: Current directory config.toml
+    let local_config = PathBuf::from("config.toml");
+    if local_config.exists() {
+        return local_config;
+    }
+
+    // Priority 3: System config /etc/uploader/config.toml
+    let system_config = PathBuf::from("/etc/uploader/config.toml");
+    if system_config.exists() {
+        return system_config;
+    }
+
+    // Priority 4: Fallback to creating config.toml in current directory
+    // This allows users to run without system-wide installation
+    local_config
+}
+
 #[derive(Parser)]
 #[command(name = "uploader")]
 #[command(about = "Distributed file transfer system with blockchain-based authentication")]
@@ -27,8 +51,8 @@ struct Cli {
     command: Commands,
 
     /// Config file path
-    #[arg(short, long, default_value = "config.toml")]
-    config: PathBuf,
+    #[arg(short, long)]
+    config: Option<PathBuf>,
 
     /// Verbose logging
     #[arg(short, long)]
@@ -163,7 +187,8 @@ async fn main() -> Result<()> {
         }
 
         Commands::Server => {
-            let config = Config::from_file(&cli.config)
+            let config_path = discover_config(cli.config);
+            let config = Config::from_file(&config_path)
                 .context("Failed to load config. Run 'uploader init-config' first")?;
 
             run_server(config).await?;
@@ -174,7 +199,8 @@ async fn main() -> Result<()> {
             servers,
             mime_type,
         } => {
-            let config = Config::from_file(&cli.config)?;
+            let config_path = discover_config(cli.config);
+            let config = Config::from_file(&config_path)?;
             upload_file(&config, &file, &servers, mime_type).await?;
         }
 
@@ -183,7 +209,8 @@ async fn main() -> Result<()> {
             file_id,
             output,
         } => {
-            let config = Config::from_file(&cli.config)?;
+            let config_path = discover_config(cli.config);
+            let config = Config::from_file(&config_path)?;
             download_file(&config, &server, &file_id, &output).await?;
         }
 
@@ -193,12 +220,14 @@ async fn main() -> Result<()> {
             page,
             page_size,
         } => {
-            let config = Config::from_file(&cli.config)?;
+            let config_path = discover_config(cli.config);
+            let config = Config::from_file(&config_path)?;
             list_files(&config, &server, source_ip, page, page_size).await?;
         }
 
         Commands::Ping { server } => {
-            let config = Config::from_file(&cli.config)?;
+            let config_path = discover_config(cli.config);
+            let config = Config::from_file(&config_path)?;
             ping_server(&config, &server).await?;
         }
 
@@ -206,7 +235,8 @@ async fn main() -> Result<()> {
             server,
             include_stale,
         } => {
-            let config = Config::from_file(&cli.config)?;
+            let config_path = discover_config(cli.config);
+            let config = Config::from_file(&config_path)?;
             list_nodes(&config, &server, include_stale).await?;
         }
     }
