@@ -1,4 +1,4 @@
-.PHONY: help build release test clean install run dev fmt lint check docs setup-dev setup-cluster benchmark health-check docker-build docker-up docker-down
+.PHONY: help build release test clean install run dev fmt lint check docs setup-dev setup-cluster benchmark health-check docker-build docker-up docker-down set-systemd-user
 
 # Configuration
 BINARY_NAME = uploader
@@ -164,6 +164,30 @@ service-debug-stop:
 	@sudo systemctl daemon-reload
 	@sudo systemctl restart uploader
 	@echo "$(GREEN)✓ Debug logging disabled - service restarted$(NC)"
+
+## set-systemd-user: Set systemd service user (usage: make set-systemd-user USER=username)
+set-systemd-user:
+	@if [ -z "$(USER)" ]; then \
+		echo "$(RED)❌ Error: USER parameter required$(NC)"; \
+		echo "$(YELLOW)Usage: make set-systemd-user USER=username$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)🔧 Setting systemd service user to: $(USER)$(NC)"
+	@if [ ! -f /etc/systemd/system/uploader.service ]; then \
+		echo "$(RED)❌ Error: Service file not found. Run 'make install-service' first$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(YELLOW)📝 Updating service file...$(NC)"
+	@sudo sed -i 's/^User=.*/User=$(USER)/' /etc/systemd/system/uploader.service
+	@sudo sed -i 's/^Group=.*/Group=$(USER)/' /etc/systemd/system/uploader.service
+	@echo "$(YELLOW)🔄 Reloading systemd daemon...$(NC)"
+	@sudo systemctl daemon-reload
+	@echo "$(YELLOW)🔄 Restarting service...$(NC)"
+	@sudo systemctl restart uploader
+	@echo "$(GREEN)✓ Systemd user changed to: $(USER)$(NC)"
+	@echo ""
+	@echo "$(BLUE)📋 Service Status:$(NC)"
+	@sudo systemctl status uploader --no-pager -l | head -20
 
 ## run: Run debug binary as server
 run: build
