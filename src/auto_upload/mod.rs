@@ -33,11 +33,85 @@ impl FileWatcher {
         info!("⏰ Scan interval: {} seconds", self.config.scan_interval_seconds);
         info!("🎯 Destination servers: {:?}", self.config.destination_servers);
 
+        // Log current user context
+        let current_user = std::env::var("USER").unwrap_or_else(|_| "unknown".to_string());
+        info!("👤 Running as user: {}", current_user);
+
+        // Log folder path details
+        info!("🔍 Checking watch folder path: {}", self.config.watch_folder.display());
+        info!("🔍 Path is absolute: {}", self.config.watch_folder.is_absolute());
+
+        // Check parent directory
+        if let Some(parent) = self.config.watch_folder.parent() {
+            info!("📂 Parent directory: {}", parent.display());
+            info!("📂 Parent exists: {}", parent.exists());
+            if parent.exists() {
+                match std::fs::metadata(parent) {
+                    Ok(metadata) => {
+                        info!("📂 Parent permissions: {:?}", metadata.permissions());
+                    }
+                    Err(e) => {
+                        warn!("⚠️  Cannot read parent metadata: {}", e);
+                    }
+                }
+            }
+        }
+
         // Ensure watch folder exists
+        info!("🔍 Checking if watch folder exists: {}", self.config.watch_folder.exists());
+
         if !self.config.watch_folder.exists() {
-            fs::create_dir_all(&self.config.watch_folder).await
-                .context("Failed to create watch folder")?;
-            info!("✅ Created watch folder: {}", self.config.watch_folder.display());
+            info!("📁 Watch folder doesn't exist, attempting to create: {}", self.config.watch_folder.display());
+
+            match fs::create_dir_all(&self.config.watch_folder).await {
+                Ok(_) => {
+                    info!("✅ Successfully created watch folder: {}", self.config.watch_folder.display());
+                }
+                Err(e) => {
+                    error!("❌ Failed to create watch folder: {}", e);
+                    error!("❌ Error kind: {:?}", e.kind());
+                    error!("❌ Path: {}", self.config.watch_folder.display());
+                    return Err(anyhow::anyhow!(
+                        "Failed to create watch folder: {} - Error: {} - Run: sudo uploader set-access-watch-folder {}",
+                        self.config.watch_folder.display(),
+                        e,
+                        self.config.watch_folder.display()
+                    ));
+                }
+            }
+        } else {
+            info!("✅ Watch folder exists: {}", self.config.watch_folder.display());
+
+            // Log folder metadata
+            match std::fs::metadata(&self.config.watch_folder) {
+                Ok(metadata) => {
+                    info!("📊 Folder permissions: {:?}", metadata.permissions());
+                    info!("📊 Is directory: {}", metadata.is_dir());
+                    info!("📊 Is readonly: {}", metadata.permissions().readonly());
+                }
+                Err(e) => {
+                    error!("❌ Cannot read folder metadata: {}", e);
+                }
+            }
+
+            // Test if we can access the folder
+            info!("🔍 Testing folder read access...");
+            match fs::read_dir(&self.config.watch_folder).await {
+                Ok(_) => {
+                    info!("✅ Watch folder is accessible for reading");
+                }
+                Err(e) => {
+                    error!("❌ Watch folder exists but cannot be accessed: {} - Error: {}",
+                           self.config.watch_folder.display(), e);
+                    error!("❌ Error kind: {:?}", e.kind());
+                    return Err(anyhow::anyhow!(
+                        "Watch folder exists but permission denied: {} - Error: {} - Run: sudo uploader set-access-watch-folder {}",
+                        self.config.watch_folder.display(),
+                        e,
+                        self.config.watch_folder.display()
+                    ));
+                }
+            }
         }
 
         let mut interval_timer = interval(Duration::from_secs(self.config.scan_interval_seconds));
