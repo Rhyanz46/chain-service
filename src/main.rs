@@ -10,6 +10,7 @@ use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::process::Command;
 use tokio::time::{interval, Duration};
 use tracing::{error, info, warn};
 use tracing_subscriber;
@@ -60,7 +61,7 @@ fn discover_config(cli_path: Option<PathBuf>) -> PathBuf {
 #[command(about = "Distributed file transfer system with blockchain-based authentication")]
 struct Cli {
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 
     /// Config file path
     #[arg(short, long)]
@@ -69,6 +70,10 @@ struct Cli {
     /// Verbose logging
     #[arg(short, long)]
     verbose: bool,
+
+    /// Show version information
+    #[arg(short = 'V', long = "version")]
+    version: bool,
 }
 
 #[derive(Subcommand)]
@@ -94,6 +99,9 @@ enum Commands {
 
     /// Edit system configuration interactively
     EditConfig,
+
+    /// Show version information
+    Version,
 
     /// Start the server
     Server,
@@ -166,9 +174,26 @@ enum Commands {
     },
 }
 
+/// Get Rust compiler version
+fn get_rustc_version() -> String {
+    Command::new("rustc")
+        .arg("--version")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .unwrap_or_else(|| "Unknown".to_string())
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Handle version flag
+    if cli.version {
+        show_version();
+        return Ok(());
+    }
 
     // Initialize logging
     let log_level = if cli.verbose { "debug" } else { "info" };
@@ -180,20 +205,24 @@ async fn main() -> Result<()> {
         .init();
 
     match cli.command {
-        Commands::GenCert {
+        Some(Commands::GenCert {
             name,
             address,
             cert_out,
             key_out,
-        } => {
+        }) => {
             generate_certificate(&name, &address, &cert_out, &key_out).await?;
         }
 
-        Commands::EditConfig => {
+        Some(Commands::EditConfig) => {
             edit_config_interactively().await?;
         }
 
-        Commands::Server => {
+        Some(Commands::Version) => {
+            show_version();
+        }
+
+        Some(Commands::Server) => {
             let config_path = discover_config(cli.config);
             let config = Config::from_file(&config_path)
                 .context("Failed to load config. Run 'uploader edit-config' first")?;
@@ -201,50 +230,54 @@ async fn main() -> Result<()> {
             run_server(config).await?;
         }
 
-        Commands::Upload {
+        Some(Commands::Upload {
             file,
             servers,
             mime_type,
-        } => {
+        }) => {
             let config_path = discover_config(cli.config);
             let config = Config::from_file(&config_path)?;
             upload_file(&config, &file, &servers, mime_type).await?;
         }
 
-        Commands::Download {
+        Some(Commands::Download {
             server,
             file_id,
             output,
-        } => {
+        }) => {
             let config_path = discover_config(cli.config);
             let config = Config::from_file(&config_path)?;
             download_file(&config, &server, &file_id, &output).await?;
         }
 
-        Commands::List {
+        Some(Commands::List {
             server,
             source_ip,
             page,
             page_size,
-        } => {
+        }) => {
             let config_path = discover_config(cli.config);
             let config = Config::from_file(&config_path)?;
             list_files(&config, &server, source_ip, page, page_size).await?;
         }
 
-        Commands::Ping { server } => {
+        Some(Commands::Ping { server }) => {
             let config_path = discover_config(cli.config);
             let config = Config::from_file(&config_path)?;
             ping_server(&config, &server).await?;
         }
 
-        Commands::ListNodes {
+        Some(Commands::ListNodes {
             server,
             include_stale,
-        } => {
+        }) => {
             let config_path = discover_config(cli.config);
             let config = Config::from_file(&config_path)?;
             list_nodes(&config, &server, include_stale).await?;
+        }
+        None => {
+            error!("No command provided. Use --help for usage information.");
+            std::process::exit(1);
         }
     }
 
@@ -857,6 +890,52 @@ async fn edit_config_interactively() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn show_version() {
+    println!("🚀 Uploader Distributed File Transfer System");
+    println!("Version: {}", env!("CARGO_PKG_VERSION"));
+
+    // Get commit hash if available
+    let commit_hash = option_env!("VERGEN_GIT_SHA");
+    let build_date = option_env!("VERGEN_BUILD_DATE");
+
+    if let Some(hash) = commit_hash {
+        println!("Git Commit: {}", hash);
+    }
+
+    if let Some(date) = build_date {
+        println!("Build Date: {}", date);
+    }
+
+    println!("Rust Version: {}", get_rustc_version());
+    println!("Binary: {}", std::env::current_exe().unwrap_or_else(|_| PathBuf::from("unknown")).display());
+    println!();
+    println!("📋 Configuration:");
+
+    // Try to show config location
+    let config_paths = vec![
+        get_system_config_path(),
+        get_dev_config_path(),
+    ];
+
+    for (i, path) in config_paths.iter().enumerate() {
+        let status = if path.exists() { "✅" } else { "❌" };
+        println!("  {}. Config: {} {}", i + 1, status, path.display());
+    }
+
+    println!();
+    println!("🔧 Features:");
+    println!("  ✅ Distributed file transfer");
+    println!("  ✅ gRPC communication");
+    println!("  ✅ Mutual TLS authentication");
+    println!("  ✅ Interactive configuration");
+    println!("  ✅ Network ID management");
+    println!("  ✅ Enhanced logging");
+    println!();
+    println!("📚 Documentation:");
+    println!("  https://github.com/your-username/uploader");
+    println!();
 }
 
 fn format_size(size: u64) -> String {
