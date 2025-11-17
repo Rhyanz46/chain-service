@@ -480,6 +480,9 @@ async fn run_server(config: Config) -> Result<()> {
         _ = async {
             if let Some(task) = auto_upload_task {
                 let _ = task.await;
+            } else {
+                // Block forever if auto upload is disabled
+                std::future::pending::<()>().await;
             }
         } => {},
     }
