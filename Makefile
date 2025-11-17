@@ -386,3 +386,21 @@ info:
 	@echo "make run-release  - Run the server"
 	@echo "make setup-cluster - Setup test cluster"
 	@echo "make all          - Full build & test"
+
+## update-and-deploy: Update code, build, and deploy with debug logging
+update-and-deploy:
+	@echo "$(BLUE)🔄 Starting update and deployment process...$(NC)"
+	@echo "$(YELLOW)📥 Updating from git...$(NC)"
+	git pull origin main
+	@echo "$(YELLOW)🔨 Building release binary...$(NC)"
+	$(MAKE) release
+	@echo "$(YELLOW)⏹️  Stopping service...$(NC)"
+	$(MAKE) service-stop
+	@echo "$(YELLOW)📦 Deploying new binary...$(NC)"
+	sudo cp ./target/release/uploader /usr/local/bin/uploader
+	@echo "$(YELLOW)🚫 Stopping debug mode...$(NC)"
+	$(MAKE) service-debug-stop
+	@echo "$(YELLOW)🔄 Restarting service...$(NC)"
+	$(MAKE) service-restart
+	@echo "$(YELLOW)📋 Showing service logs...$(NC)"
+	$(MAKE) service-logs
