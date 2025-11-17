@@ -1,4 +1,4 @@
-.PHONY: help build release test clean install run dev fmt lint check docs setup-dev setup-cluster benchmark health-check docker-build docker-up docker-down set-systemd-user
+.PHONY: help build release test clean install run dev fmt lint check docs setup-dev setup-cluster benchmark health-check docker-build docker-up docker-down set-systemd-user grant-watch-folder-access
 
 # Configuration
 BINARY_NAME = uploader
@@ -188,6 +188,36 @@ set-systemd-user:
 	@echo ""
 	@echo "$(BLUE)📋 Service Status:$(NC)"
 	@sudo systemctl status uploader --no-pager -l | head -20
+
+## grant-watch-folder-access: Grant uploader user access to watch folder (usage: make grant-watch-folder-access FOLDER=/path/to/folder)
+grant-watch-folder-access:
+	@if [ -z "$(FOLDER)" ]; then \
+		echo "$(RED)❌ Error: FOLDER parameter required$(NC)"; \
+		echo "$(YELLOW)Usage: make grant-watch-folder-access FOLDER=/path/to/folder$(NC)"; \
+		echo "$(YELLOW)Example: make grant-watch-folder-access FOLDER=/home/rhyanz46/uploads$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)🔧 Granting uploader user access to: $(FOLDER)$(NC)"
+	@DAEMON_USER=$$(sudo systemctl show uploader -p User --value 2>/dev/null || echo "uploader"); \
+	echo "$(YELLOW)📋 Systemd user: $$DAEMON_USER$(NC)"; \
+	if [ ! -d "$(FOLDER)" ]; then \
+		echo "$(YELLOW)📁 Creating folder: $(FOLDER)$(NC)"; \
+		sudo mkdir -p "$(FOLDER)"; \
+	fi; \
+	echo "$(YELLOW)🔐 Setting ACL permissions...$(NC)"; \
+	sudo setfacl -R -m u:$$DAEMON_USER:rwx "$(FOLDER)" 2>/dev/null || { \
+		echo "$(YELLOW)⚠️  ACL not available, using group-based permissions...$(NC)"; \
+		FOLDER_OWNER=$$(stat -c '%U' "$(FOLDER)" 2>/dev/null || stat -f '%Su' "$(FOLDER)"); \
+		echo "$(YELLOW)👤 Folder owner: $$FOLDER_OWNER$(NC)"; \
+		sudo usermod -a -G $$FOLDER_OWNER $$DAEMON_USER 2>/dev/null || true; \
+		sudo chmod g+rwx "$(FOLDER)"; \
+		echo "$(GREEN)✓ Added $$DAEMON_USER to $$FOLDER_OWNER group$(NC)"; \
+	}; \
+	sudo setfacl -d -m u:$$DAEMON_USER:rwx "$(FOLDER)" 2>/dev/null || true; \
+	echo "$(GREEN)✓ Access granted to $$DAEMON_USER$(NC)"; \
+	echo "$(BLUE)📋 Folder permissions:$(NC)"; \
+	ls -ld "$(FOLDER)"; \
+	getfacl "$(FOLDER)" 2>/dev/null || echo "$(YELLOW)ACL not available$(NC)"
 
 ## run: Run debug binary as server
 run: build
