@@ -1,3 +1,4 @@
+mod auto_upload;
 mod config;
 mod grpc;
 mod network;
@@ -18,6 +19,7 @@ use tracing_subscriber;
 use config::Config;
 use network::{FileTransferClient, FileTransferServer};
 use pki::{CertificateManager, CertificateValidator, NodeIdentity};
+use auto_upload::FileWatcher;
 use registry::{DistributedRegistry, NodeRegistry};
 use storage::{FileManager, StorageConfig};
 
@@ -106,6 +108,9 @@ enum Commands {
 
     /// Show version information
     Version,
+
+    /// Start auto-upload daemon
+    AutoUpload,
 
     /// Start the server
     Server,
@@ -229,6 +234,25 @@ async fn main() -> Result<()> {
 
         Some(Commands::Version) => {
             show_version();
+        }
+
+        Some(Commands::AutoUpload) => {
+            let config_path = discover_config(cli.config);
+            let config = Config::from_file(&config_path)
+                .context("Failed to load config. Run 'uploader edit-config' first")?;
+
+            if !config.auto_upload.enabled {
+                error!("❌ Auto upload is disabled. Enable it in configuration first.");
+                anyhow::bail!("Auto upload disabled");
+            }
+
+            if config.auto_upload.destination_servers.is_empty() {
+                error!("❌ No destination servers configured. Set destination_servers in configuration first.");
+                anyhow::bail!("No destination servers configured");
+            }
+
+            info!("🚀 Starting auto upload daemon...");
+            run_auto_upload(config).await?;
         }
 
         Some(Commands::Server) => {
@@ -418,8 +442,34 @@ async fn run_server(config: Config) -> Result<()> {
         }
     });
 
+    // Spawn auto upload task if enabled
+    let auto_upload_task = if config.auto_upload.enabled {
+        if config.auto_upload.destination_servers.is_empty() {
+            warn!("⚠️ Auto upload enabled but no destination servers configured");
+            None
+        } else {
+            info!("🔄 Starting auto upload task");
+            let auto_upload_config = config.auto_upload.clone();
+            let client = FileTransferClient::new(identity.clone(), config.storage.chunk_size);
+            let auto_upload_identity = identity.clone();
+
+            let task = tokio::spawn(async move {
+                let file_watcher = FileWatcher::new(auto_upload_config, client, auto_upload_identity);
+                if let Err(e) = file_watcher.start().await {
+                    error!("❌ Auto upload task failed: {}", e);
+                }
+            });
+            Some(task)
+        }
+    } else {
+        None
+    };
+
     info!("Server running on {}", config.node.listen_address);
     info!("P2P network running on port {}", config.network.p2p_port);
+    if config.auto_upload.enabled {
+        info!("🔄 Auto upload enabled - watching: {}", config.auto_upload.watch_folder.display());
+    }
 
     // Wait for tasks
     tokio::select! {
@@ -427,6 +477,11 @@ async fn run_server(config: Config) -> Result<()> {
         _ = registry_task => {},
         _ = event_task => {},
         _ = heartbeat_task => {},
+        _ = async {
+            if let Some(task) = auto_upload_task {
+                let _ = task.await;
+            }
+        } => {},
     }
 
     Ok(())
@@ -843,6 +898,128 @@ async fn edit_config_interactively(config_path: &Path) -> Result<()> {
 
     println!();
 
+    // Edit auto upload configuration
+    println!("🔄 Auto Upload Configuration");
+    println!("=============================");
+    println!("Current enabled: {}", config.auto_upload.enabled);
+    print!("Enable auto upload? (y/n) [{}]: ",
+        if config.auto_upload.enabled { "y" } else { "n" });
+    io::stdout().flush()?;
+
+    let mut input = String::new();
+    io::stdin().read_line(&mut input)?;
+    let input = input.trim().to_lowercase();
+    if !input.is_empty() {
+        config.auto_upload.enabled = matches!(input.as_str(), "y" | "yes" | "true" | "1");
+    }
+
+    if config.auto_upload.enabled {
+        // Watch folder
+        println!("Current watch folder: {}", config.auto_upload.watch_folder.display());
+        print!("Enter watch folder [{}]: ", config.auto_upload.watch_folder.display());
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if !input.is_empty() {
+            config.auto_upload.watch_folder = PathBuf::from(input);
+        }
+
+        // Scan interval
+        println!("Current scan interval: {} seconds", config.auto_upload.scan_interval_seconds);
+        print!("Enter scan interval in seconds [{}]: ", config.auto_upload.scan_interval_seconds);
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if !input.is_empty() {
+            config.auto_upload.scan_interval_seconds = input.parse()
+                .context("Invalid scan interval (must be a number)")?;
+        }
+
+        // Destination servers
+        println!("Current destination servers: {:?}", config.auto_upload.destination_servers);
+        print!("Enter destination servers (comma-separated) [{}]: ",
+            config.auto_upload.destination_servers.join(","));
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if !input.is_empty() {
+            config.auto_upload.destination_servers = input
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect();
+        }
+
+        // File extensions
+        println!("Current file extensions: {:?}", config.auto_upload.file_extensions);
+        print!("Enter file extensions to monitor (comma-separated, blank for all) [{}]: ",
+            config.auto_upload.file_extensions.join(","));
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if !input.is_empty() {
+            config.auto_upload.file_extensions = input
+                .split(',')
+                .map(|s| {
+                    let ext = s.trim();
+                    if ext.starts_with('.') {
+                        ext.to_string()
+                    } else {
+                        format!(".{}", ext)
+                    }
+                })
+                .collect();
+        }
+
+        // Max file size
+        println!("Current max file size: {} bytes", config.auto_upload.max_file_size);
+        print!("Enter max file size in bytes (0 for unlimited) [{}]: ", config.auto_upload.max_file_size);
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if !input.is_empty() {
+            config.auto_upload.max_file_size = input.parse()
+                .context("Invalid max file size (must be a number)")?;
+        }
+
+        // Rename after upload
+        println!("Current rename after upload: {}", config.auto_upload.rename_after_upload);
+        print!("Rename files after successful upload? (y/n) [{}]: ",
+            if config.auto_upload.rename_after_upload { "y" } else { "n" });
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim().to_lowercase();
+        if !input.is_empty() {
+            config.auto_upload.rename_after_upload = matches!(input.as_str(), "y" | "yes" | "true" | "1");
+        }
+
+        // Upload suffix
+        println!("Current upload suffix: {}", config.auto_upload.upload_suffix);
+        print!("Enter upload suffix [{}]: ", config.auto_upload.upload_suffix);
+        io::stdout().flush()?;
+
+        let mut input = String::new();
+        io::stdin().read_line(&mut input)?;
+        let input = input.trim();
+        if !input.is_empty() {
+            config.auto_upload.upload_suffix = input.to_string();
+        }
+    }
+
+    println!();
+
     // Show final configuration summary
     println!("📋 Configuration Summary");
     println!("========================");
@@ -859,6 +1036,16 @@ async fn edit_config_interactively(config_path: &Path) -> Result<()> {
     println!("Chunk size: {} bytes", config.storage.chunk_size);
     println!("Certificate path: {}", config.node.certificate_path.display());
     println!("Private key path: {}", config.node.private_key_path.display());
+    println!("Auto upload enabled: {}", config.auto_upload.enabled);
+    if config.auto_upload.enabled {
+        println!("  Watch folder: {}", config.auto_upload.watch_folder.display());
+        println!("  Scan interval: {} seconds", config.auto_upload.scan_interval_seconds);
+        println!("  Destination servers: {:?}", config.auto_upload.destination_servers);
+        println!("  File extensions: {:?}", config.auto_upload.file_extensions);
+        println!("  Max file size: {} bytes", config.auto_upload.max_file_size);
+        println!("  Rename after upload: {}", config.auto_upload.rename_after_upload);
+        println!("  Upload suffix: {}", config.auto_upload.upload_suffix);
+    }
     println!();
 
     print!("Save this configuration to {}? (y/n): ", config_path.display());
@@ -944,6 +1131,40 @@ fn show_version() {
     println!("📚 Documentation:");
     println!("  https://github.com/your-username/uploader");
     println!();
+}
+
+/// Run auto upload daemon
+async fn run_auto_upload(config: Config) -> Result<()> {
+    info!("🚀 Initializing auto upload daemon");
+
+    // Load or generate certificate
+    let identity = load_or_generate_identity(&config).await
+        .context("Failed to load node identity")?;
+
+    // Create file transfer client
+    let client = FileTransferClient::new(identity.clone(), config.storage.chunk_size);
+
+    // Clone auto upload config for display
+    let auto_upload_config = config.auto_upload.clone();
+
+    // Create file watcher
+    let file_watcher = FileWatcher::new(config.auto_upload, client, identity);
+
+    info!("✅ Auto upload daemon initialized successfully");
+    info!("🔁 Starting file watcher (Press Ctrl+C to stop)");
+    println!();
+    println!("🔁 Auto Upload Daemon Running");
+    println!("=============================");
+    println!("Watch folder: {}", auto_upload_config.watch_folder.display());
+    println!("Scan interval: {} seconds", auto_upload_config.scan_interval_seconds);
+    println!("Destination servers: {}", auto_upload_config.destination_servers.len());
+    for server in &auto_upload_config.destination_servers {
+        println!("  - {}", server);
+    }
+    println!();
+
+    // Start the file watcher
+    file_watcher.start().await
 }
 
 fn format_size(size: u64) -> String {

@@ -21,6 +21,10 @@ pub struct Config {
 
     /// Network ID management configuration
     pub network_ids: NetworkIdConfig,
+
+    /// Auto upload configuration
+    #[serde(default)]
+    pub auto_upload: AutoUploadConfig,
 }
 
 /// Node configuration
@@ -119,11 +123,68 @@ pub struct NetworkIdConfig {
     pub max_nodes_per_network: std::collections::HashMap<String, u32>,
 }
 
+/// Auto upload configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoUploadConfig {
+    /// Enable auto upload functionality
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Scan interval in seconds (how often to check for new files)
+    #[serde(default = "default_scan_interval")]
+    pub scan_interval_seconds: u64,
+
+    /// Directory to watch for new files
+    #[serde(default)]
+    pub watch_folder: PathBuf,
+
+    /// Destination servers for auto upload
+    #[serde(default)]
+    pub destination_servers: Vec<String>,
+
+    /// File extensions to monitor (empty = all files)
+    #[serde(default)]
+    pub file_extensions: Vec<String>,
+
+    /// Maximum file size in bytes for auto upload (0 = unlimited)
+    #[serde(default = "default_max_file_size")]
+    pub max_file_size: u64,
+
+    /// Delete or rename files after successful upload
+    #[serde(default = "default_rename_after_upload")]
+    pub rename_after_upload: bool,
+
+    /// Custom suffix for uploaded files (default: "_uploaded")
+    #[serde(default = "default_upload_suffix")]
+    pub upload_suffix: String,
+}
+
+impl Default for AutoUploadConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false, // Disabled by default
+            scan_interval_seconds: 60, // 1 minute
+            watch_folder: PathBuf::from("./uploads"),
+            destination_servers: Vec::new(),
+            file_extensions: Vec::new(), // All files
+            max_file_size: 1073741824, // 1GB
+            rename_after_upload: true,
+            upload_suffix: "_uploaded".to_string(),
+        }
+    }
+}
+
 // Default values for configuration options
 fn default_reservation_timeout() -> u64 { 300 } // 5 minutes
 fn default_offline_threshold() -> u64 { 86400 } // 24 hours
 fn default_cleanup_interval() -> u64 { 3600 } // 1 hour
 fn default_auto_recovery() -> bool { true }
+
+// Default values for auto upload configuration
+fn default_scan_interval() -> u64 { 60 } // 1 minute
+fn default_max_file_size() -> u64 { 1073741824 } // 1GB
+fn default_rename_after_upload() -> bool { true }
+fn default_upload_suffix() -> String { "_uploaded".to_string() }
 
 impl Default for Config {
     fn default() -> Self {
@@ -166,6 +227,16 @@ impl Default for Config {
                 cleanup_interval: 3600, // 1 hour
                 auto_recovery: true,
                 max_nodes_per_network: max_nodes,
+            },
+            auto_upload: AutoUploadConfig {
+                enabled: false, // Disabled by default
+                scan_interval_seconds: 60, // 1 minute
+                watch_folder: PathBuf::from("./uploads"),
+                destination_servers: Vec::new(),
+                file_extensions: Vec::new(), // All files
+                max_file_size: 1073741824, // 1GB
+                rename_after_upload: true,
+                upload_suffix: "_uploaded".to_string(),
             },
         }
     }
