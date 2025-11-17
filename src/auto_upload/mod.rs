@@ -218,8 +218,20 @@ impl FileWatcher {
               file_path.display(),
               self.config.destination_servers.len());
 
+        // Normalize server addresses - add default port :50051 if not specified
+        let normalized_servers: Vec<String> = self.config.destination_servers
+            .iter()
+            .map(|server| {
+                if server.contains(':') {
+                    server.clone()
+                } else {
+                    format!("{}:50051", server)
+                }
+            })
+            .collect();
+
         let results = self.client.upload_to_multiple(
-            &self.config.destination_servers,
+            &normalized_servers,
             file_path,
             None, // Let server detect MIME type
         ).await?;
@@ -233,12 +245,12 @@ impl FileWatcher {
                 Ok(file_id) => {
                     success_count += 1;
                     info!("✅ Upload to {} successful (ID: {})",
-                          self.config.destination_servers[i], file_id);
+                          normalized_servers[i], file_id);
                 }
                 Err(e) => {
                     failure_count += 1;
                     error!("❌ Upload to {} failed: {}",
-                           self.config.destination_servers[i], e);
+                           normalized_servers[i], e);
                 }
             }
         }
