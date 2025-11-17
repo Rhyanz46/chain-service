@@ -8,6 +8,7 @@ mod storage;
 
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
+use std::fs;
 use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
@@ -108,6 +109,12 @@ enum Commands {
 
     /// Show version information
     Version,
+
+    /// Grant daemon user access to watch folder for auto upload
+    SetAccessWatchFolder {
+        /// Watch folder path
+        folder: PathBuf,
+    },
 
     /// Start the server
     Server,
@@ -231,6 +238,10 @@ async fn main() -> Result<()> {
 
         Some(Commands::Version) => {
             show_version();
+        }
+
+        Some(Commands::SetAccessWatchFolder { folder }) => {
+            set_access_watch_folder(&folder)?;
         }
 
         Some(Commands::Server) => {
@@ -1112,6 +1123,125 @@ fn show_version() {
     println!("📚 Documentation:");
     println!("  https://github.com/your-username/uploader");
     println!();
+}
+
+/// Set ACL permissions for watch folder to grant daemon user access
+fn set_access_watch_folder(folder: &Path) -> Result<()> {
+    use std::process::Command;
+
+    println!("🔧 Setting up access for auto upload watch folder");
+    println!("📁 Folder: {}", folder.display());
+    println!();
+
+    // Get systemd service user
+    let systemd_user_output = Command::new("systemctl")
+        .args(["show", "uploader", "-p", "User", "--value"])
+        .output();
+
+    let daemon_user = match systemd_user_output {
+        Ok(output) => {
+            let user = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if user.is_empty() {
+                "uploader".to_string()
+            } else {
+                user
+            }
+        }
+        Err(_) => "uploader".to_string(),
+    };
+
+    println!("👤 Daemon user: {}", daemon_user);
+
+    // Create folder if doesn't exist
+    if !folder.exists() {
+        println!("📁 Creating folder...");
+        fs::create_dir_all(folder)
+            .with_context(|| format!("Failed to create folder: {}", folder.display()))?;
+        println!("✅ Folder created");
+    }
+
+    // Try to set ACL permissions
+    println!("🔐 Setting ACL permissions...");
+
+    let setfacl_result = Command::new("setfacl")
+        .args(["-R", "-m", &format!("u:{}:rwx", daemon_user), folder.to_str().unwrap()])
+        .status();
+
+    match setfacl_result {
+        Ok(status) if status.success() => {
+            println!("✅ ACL permissions set successfully");
+
+            // Set default ACL for new files
+            let _ = Command::new("setfacl")
+                .args(["-d", "-m", &format!("u:{}:rwx", daemon_user), folder.to_str().unwrap()])
+                .status();
+
+            println!("✅ Default ACL set for new files");
+        }
+        _ => {
+            println!("⚠️  ACL not available, using group-based permissions...");
+
+            // Get folder owner
+            let stat_output = Command::new("stat")
+                .args(["-c", "%U", folder.to_str().unwrap()])
+                .output()
+                .or_else(|_| {
+                    Command::new("stat")
+                        .args(["-f", "%Su", folder.to_str().unwrap()])
+                        .output()
+                })?;
+
+            let folder_owner = String::from_utf8_lossy(&stat_output.stdout).trim().to_string();
+            println!("👤 Folder owner: {}", folder_owner);
+
+            // Add daemon user to folder owner's group
+            let usermod_result = Command::new("usermod")
+                .args(["-a", "-G", &folder_owner, &daemon_user])
+                .status();
+
+            if let Ok(status) = usermod_result {
+                if status.success() {
+                    println!("✅ Added {} to {} group", daemon_user, folder_owner);
+                }
+            }
+
+            // Set group permissions
+            Command::new("chmod")
+                .args(["g+rwx", folder.to_str().unwrap()])
+                .status()?;
+
+            println!("✅ Group permissions set");
+        }
+    }
+
+    println!();
+    println!("📋 Folder permissions:");
+    let ls_output = Command::new("ls")
+        .args(["-ld", folder.to_str().unwrap()])
+        .output()?;
+    println!("{}", String::from_utf8_lossy(&ls_output.stdout));
+
+    // Try to show ACL
+    if let Ok(getfacl_output) = Command::new("getfacl")
+        .arg(folder.to_str().unwrap())
+        .output()
+    {
+        if !getfacl_output.stdout.is_empty() {
+            println!("📋 ACL permissions:");
+            println!("{}", String::from_utf8_lossy(&getfacl_output.stdout));
+        }
+    }
+
+    println!();
+    println!("✅ Done! The uploader daemon now has access to:");
+    println!("   {}", folder.display());
+    println!();
+    println!("💡 Next steps:");
+    println!("   1. Update config: sudo uploader edit-config --config /etc/uploader/config.toml");
+    println!("   2. Set watch_folder = \"{}\"", folder.display());
+    println!("   3. Restart service: sudo systemctl restart uploader");
+
+    Ok(())
 }
 
 fn format_size(size: u64) -> String {
