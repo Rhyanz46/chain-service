@@ -253,7 +253,21 @@ impl FileTransferClient {
 
         // Add certificate to metadata
         let mut request = Request::new(download_request);
-        let cert_value = MetadataValue::try_from(self.identity.certificate())?;
+        // Remove newlines from certificate for gRPC metadata compatibility
+        let cert_pem = self.identity.certificate();
+        debug!("🔍 client: Original certificate length: {} chars", cert_pem.len());
+        let cert_clean = cert_pem.replace('\n', "");
+        debug!("✅ client: Certificate cleaned - newlines removed");
+        debug!("🔍 client: Cleaned certificate length: {} chars", cert_clean.len());
+
+        let cert_value = MetadataValue::try_from(&cert_clean)
+            .map_err(|e| {
+                error!("❌ client: Failed to convert certificate to metadata value: {}", e);
+                error!("🔍 client: Certificate contains invalid characters for HTTP headers");
+                e
+            })?;
+
+        debug!("🔑 client: Certificate added to request metadata");
         request.metadata_mut().insert("x-certificate", cert_value);
 
         // Get the stream
@@ -318,7 +332,21 @@ impl FileTransferClient {
 
         // Add certificate to metadata
         let mut request = Request::new(list_request);
-        let cert_value = MetadataValue::try_from(self.identity.certificate())?;
+        // Remove newlines from certificate for gRPC metadata compatibility
+        let cert_pem = self.identity.certificate();
+        debug!("🔍 client: Original certificate length: {} chars", cert_pem.len());
+        let cert_clean = cert_pem.replace('\n', "");
+        debug!("✅ client: Certificate cleaned - newlines removed");
+        debug!("🔍 client: Cleaned certificate length: {} chars", cert_clean.len());
+
+        let cert_value = MetadataValue::try_from(&cert_clean)
+            .map_err(|e| {
+                error!("❌ client: Failed to convert certificate to metadata value: {}", e);
+                error!("🔍 client: Certificate contains invalid characters for HTTP headers");
+                e
+            })?;
+
+        debug!("🔑 client: Certificate added to request metadata");
         request.metadata_mut().insert("x-certificate", cert_value);
 
         let response = client.list_files(request).await?;
