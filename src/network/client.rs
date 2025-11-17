@@ -5,7 +5,7 @@ use tokio::io::AsyncWriteExt;
 use tokio_stream::StreamExt;
 use tonic::transport::Channel;
 use tonic::{Request, metadata::MetadataValue};
-use tracing::{debug, info};
+use tracing::{debug, info, error};
 
 use crate::grpc::file_transfer::{
     file_transfer_service_client::FileTransferServiceClient, AuthRequest, DownloadRequest,
@@ -153,15 +153,35 @@ impl FileTransferClient {
         request.metadata_mut().insert("x-certificate", cert_value);
 
         // Send the request
-        let response = client.upload_file(request).await?;
+        debug!("🔄 client: Sending upload request to server");
+
+        let response = match client.upload_file(request).await {
+            Ok(response) => {
+                debug!("✅ client: Upload request sent successfully");
+                response
+            },
+            Err(e) => {
+                error!("❌ client: Failed to send upload request: {:?}", e);
+                return Err(e.into());
+            }
+        };
+
+        debug!("🔄 client: Processing upload response");
         let upload_response = response.into_inner();
 
+        debug!("🔍 client: Upload response received:");
+        debug!("🔍 client: - success: {}", upload_response.success);
+        debug!("🔍 client: - message: '{}'", upload_response.message);
+        debug!("🔍 client: - file_id: {}", upload_response.file_id);
+        debug!("🔍 client: - bytes_received: {}", upload_response.bytes_received);
+
         if !upload_response.success {
+            error!("❌ client: Upload failed: {}", upload_response.message);
             anyhow::bail!("Upload failed: {}", upload_response.message);
         }
 
         info!(
-            "Upload successful: {} bytes (ID: {})",
+            "✅ Upload successful: {} bytes (ID: {})",
             upload_response.bytes_received, upload_response.file_id
         );
 

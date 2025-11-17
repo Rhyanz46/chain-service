@@ -4,7 +4,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use tokio_stream::{Stream, StreamExt};
 use tonic::{Request, Response, Status};
-use tracing::{info, warn};
+use tracing::{debug, info, warn, error};
 
 use super::file_transfer::{
     file_transfer_service_server::FileTransferService,
@@ -156,73 +156,155 @@ impl FileTransferService for FileTransferServiceImpl {
         &self,
         request: Request<tonic::Streaming<FileChunk>>,
     ) -> Result<Response<UploadResponse>, Status> {
-        let _node_id = self.authenticate_request(&request)?;
+        debug!("🔥 upload_file: Starting upload request processing");
+
+        let node_id = self.authenticate_request(&request)?;
         let client_ip = self.get_client_ip(&request)?;
 
-        info!("Receiving file upload from {}", client_ip);
+        info!("📁 Receiving file upload from {} (node_id: {})", client_ip, node_id);
+        debug!("🔍 upload_file: Client IP: {}, Node ID: {}", client_ip, node_id);
 
         let mut stream = request.into_inner();
         let mut writer: Option<crate::storage::file_manager::FileWriter> = None;
         let mut total_bytes = 0u64;
         let mut file_id = String::new();
+        let mut chunk_count = 0u64;
+        let mut metadata_received = false;
+
+        debug!("🔄 upload_file: Starting stream processing loop");
 
         // Process chunks
-        while let Some(chunk) = stream.next().await {
-            let chunk = chunk?;
+        while let Some(chunk_result) = stream.next().await {
+            debug!("🔍 upload_file: Received chunk_result #{}", chunk_count + 1);
+
+            let chunk = match chunk_result {
+                Ok(chunk) => {
+                    debug!("✅ upload_file: Successfully parsed chunk #{}", chunk_count + 1);
+                    debug!("🔍 upload_file: Chunk data size: {}, has_metadata: {}",
+                        chunk.data.len(), chunk.metadata.is_some());
+                    chunk
+                },
+                Err(e) => {
+                    error!("❌ upload_file: Failed to parse chunk #{}: {:?}", chunk_count + 1, e);
+                    return Err(Status::internal(format!("Failed to parse metadata value: {:?}", e)));
+                }
+            };
+
+            chunk_count += 1;
 
             // First chunk contains metadata
             if writer.is_none() {
-                let metadata = chunk
-                    .metadata
-                    .ok_or_else(|| Status::invalid_argument("First chunk must contain metadata"))?;
+                debug!("🔍 upload_file: Processing first chunk (metadata)");
 
-                let file_writer = self
-                    .file_manager
-                    .start_write(
-                        metadata.filename.clone(),
-                        client_ip,
-                        metadata.file_size,
-                        metadata.mime_type.clone(),
-                    )
-                    .await
-                    .map_err(|e| Status::internal(format!("Failed to start write: {}", e)))?;
+                let metadata = match chunk.metadata {
+                    Some(meta) => {
+                        debug!("✅ upload_file: Metadata found");
+                        debug!("🔍 upload_file: Filename: {}, Size: {}, MIME: {}, Source: {}",
+                            meta.filename, meta.file_size, meta.mime_type, meta.source_ip);
+                        meta
+                    },
+                    None => {
+                        error!("❌ upload_file: First chunk missing metadata");
+                        return Err(Status::invalid_argument("First chunk must contain metadata"));
+                    }
+                };
+
+                debug!("🔄 upload_file: Starting file write for {}", metadata.filename);
+
+                let file_writer = match self.file_manager.start_write(
+                    metadata.filename.clone(),
+                    client_ip,
+                    metadata.file_size,
+                    metadata.mime_type.clone(),
+                ).await {
+                    Ok(writer) => {
+                        debug!("✅ upload_file: File writer created successfully");
+                        writer
+                    },
+                    Err(e) => {
+                        error!("❌ upload_file: Failed to start write: {:?}", e);
+                        return Err(Status::internal(format!("Failed to start write: {}", e)));
+                    }
+                };
 
                 file_id = file_writer.file_id.clone();
+                debug!("🔍 upload_file: File ID assigned: {}", file_id);
                 writer = Some(file_writer);
+                metadata_received = true;
+                debug!("✅ upload_file: Metadata processed successfully");
             }
 
             // Write chunk data
             if !chunk.data.is_empty() {
-                let w = writer
-                    .as_mut()
-                    .ok_or_else(|| Status::internal("Writer not initialized"))?;
+                debug!("🔄 upload_file: Writing chunk data, size: {} bytes", chunk.data.len());
 
-                w.write_chunk(&chunk.data)
-                    .await
-                    .map_err(|e| Status::internal(format!("Failed to write chunk: {}", e)))?;
+                let w = match writer.as_mut() {
+                    Some(writer) => {
+                        debug!("✅ upload_file: Writer ready for chunk write");
+                        writer
+                    },
+                    None => {
+                        error!("❌ upload_file: Writer not initialized when trying to write chunk data");
+                        return Err(Status::internal("Writer not initialized"));
+                    }
+                };
+
+                match w.write_chunk(&chunk.data).await {
+                    Ok(_) => {
+                        debug!("✅ upload_file: Chunk #{} written successfully", chunk_count);
+                    },
+                    Err(e) => {
+                        error!("❌ upload_file: Failed to write chunk #{}: {:?}", chunk_count, e);
+                        return Err(Status::internal(format!("Failed to write chunk: {}", e)));
+                    }
+                };
 
                 total_bytes += chunk.data.len() as u64;
+                debug!("🔍 upload_file: Total bytes written so far: {}", total_bytes);
+            } else {
+                debug!("🔍 upload_file: Empty chunk data received, skipping write");
             }
         }
 
         // Finalize
+        debug!("🔍 upload_file: Stream processing completed, chunks processed: {}", chunk_count);
+        debug!("🔍 upload_file: Total bytes received: {}", total_bytes);
+        debug!("🔍 upload_file: Metadata received: {}", metadata_received);
+
         if let Some(w) = writer {
-            w.finalize(&self.file_manager)
-                .await
-                .map_err(|e| Status::internal(format!("Failed to finalize: {}", e)))?;
+            debug!("🔄 upload_file: Finalizing file upload");
+
+            match w.finalize(&self.file_manager).await {
+                Ok(_) => {
+                    debug!("✅ upload_file: File finalized successfully");
+                },
+                Err(e) => {
+                    error!("❌ upload_file: Failed to finalize file: {:?}", e);
+                    return Err(Status::internal(format!("Failed to finalize: {}", e)));
+                }
+            }
 
             info!(
-                "Upload complete: {} bytes from {} (ID: {})",
-                total_bytes, client_ip, file_id
+                "✅ Upload complete: {} bytes from {} (ID: {}, chunks: {})",
+                total_bytes, client_ip, file_id, chunk_count
             );
 
-            Ok(Response::new(UploadResponse {
+            let response = UploadResponse {
                 success: true,
-                message: "Upload successful".to_string(),
+                message: format!("Upload successful: {} bytes processed", total_bytes),
                 file_id,
                 bytes_received: total_bytes,
-            }))
+            };
+
+            debug!("🔄 upload_file: Sending successful response");
+            debug!("🔍 upload_file: Response - success: {}, message: '{}', file_id: {}, bytes: {}",
+                response.success, response.message, response.file_id, response.bytes_received);
+
+            Ok(Response::new(response))
         } else {
+            error!("❌ upload_file: No writer was initialized - no data received");
+            error!("🔍 upload_file: Chunk count: {}, metadata_received: {}, total_bytes: {}",
+                chunk_count, metadata_received, total_bytes);
             Err(Status::invalid_argument("No data received"))
         }
     }
