@@ -109,9 +109,6 @@ enum Commands {
     /// Show version information
     Version,
 
-    /// Start auto-upload daemon
-    AutoUpload,
-
     /// Start the server
     Server,
 
@@ -234,25 +231,6 @@ async fn main() -> Result<()> {
 
         Some(Commands::Version) => {
             show_version();
-        }
-
-        Some(Commands::AutoUpload) => {
-            let config_path = discover_config(cli.config);
-            let config = Config::from_file(&config_path)
-                .context("Failed to load config. Run 'uploader edit-config' first")?;
-
-            if !config.auto_upload.enabled {
-                error!("❌ Auto upload is disabled. Enable it in configuration first.");
-                anyhow::bail!("Auto upload disabled");
-            }
-
-            if config.auto_upload.destination_servers.is_empty() {
-                error!("❌ No destination servers configured. Set destination_servers in configuration first.");
-                anyhow::bail!("No destination servers configured");
-            }
-
-            info!("🚀 Starting auto upload daemon...");
-            run_auto_upload(config).await?;
         }
 
         Some(Commands::Server) => {
@@ -1134,40 +1112,6 @@ fn show_version() {
     println!("📚 Documentation:");
     println!("  https://github.com/your-username/uploader");
     println!();
-}
-
-/// Run auto upload daemon
-async fn run_auto_upload(config: Config) -> Result<()> {
-    info!("🚀 Initializing auto upload daemon");
-
-    // Load or generate certificate
-    let identity = load_or_generate_identity(&config).await
-        .context("Failed to load node identity")?;
-
-    // Create file transfer client
-    let client = FileTransferClient::new(identity.clone(), config.storage.chunk_size);
-
-    // Clone auto upload config for display
-    let auto_upload_config = config.auto_upload.clone();
-
-    // Create file watcher
-    let file_watcher = FileWatcher::new(config.auto_upload, client, identity);
-
-    info!("✅ Auto upload daemon initialized successfully");
-    info!("🔁 Starting file watcher (Press Ctrl+C to stop)");
-    println!();
-    println!("🔁 Auto Upload Daemon Running");
-    println!("=============================");
-    println!("Watch folder: {}", auto_upload_config.watch_folder.display());
-    println!("Scan interval: {} seconds", auto_upload_config.scan_interval_seconds);
-    println!("Destination servers: {}", auto_upload_config.destination_servers.len());
-    for server in &auto_upload_config.destination_servers {
-        println!("  - {}", server);
-    }
-    println!();
-
-    // Start the file watcher
-    file_watcher.start().await
 }
 
 fn format_size(size: u64) -> String {
