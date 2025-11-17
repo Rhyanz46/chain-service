@@ -145,6 +145,26 @@ service-restart:
 service-logs:
 	@sudo journalctl -u uploader.service -f
 
+## service-debug: Enable debug logging for systemd service
+service-debug:
+	@echo "$(BLUE)Enabling debug logging for uploader service...$(NC)"
+	@sudo mkdir -p /etc/systemd/system/uploader.service.d
+	@echo '[Service]' | sudo tee /etc/systemd/system/uploader.service.d/debug.conf > /dev/null
+	@echo 'Environment="RUST_LOG=debug"' | sudo tee -a /etc/systemd/system/uploader.service.d/debug.conf > /dev/null
+	@echo 'Environment="RUST_BACKTRACE=1"' | sudo tee -a /etc/systemd/system/uploader.service.d/debug.conf > /dev/null
+	@sudo systemctl daemon-reload
+	@sudo systemctl restart uploader
+	@echo "$(GREEN)✓ Debug logging enabled - service restarted$(NC)"
+	@echo "$(YELLOW)View logs with: make service-logs$(NC)"
+
+## service-debug-stop: Disable debug logging for systemd service
+service-debug-stop:
+	@echo "$(YELLOW)Disabling debug logging for uploader service...$(NC)"
+	@sudo rm -f /etc/systemd/system/uploader.service.d/debug.conf
+	@sudo systemctl daemon-reload
+	@sudo systemctl restart uploader
+	@echo "$(GREEN)✓ Debug logging disabled - service restarted$(NC)"
+
 ## run: Run debug binary as server
 run: build
 	@echo "$(BLUE)Starting server (debug mode)...$(NC)"
