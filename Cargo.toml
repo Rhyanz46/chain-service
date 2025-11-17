@@ -1,6 +1,6 @@
 [package]
 name = "uploader"
-version = "0.1.4"
+version = "0.1.5-list-nodes-fix"
 edition = "2021"
 
 [dependencies]

@@ -385,8 +385,10 @@ impl FileTransferClient {
             include_stale,
         });
 
-        // Add certificate to metadata
-        let cert_value = MetadataValue::try_from(&self.identity.certificate_pem)?;
+        // Add certificate to metadata with newline removal
+        let cert_pem = self.identity.certificate();
+        let cert_clean = cert_pem.replace('\n', "");
+        let cert_value = MetadataValue::try_from(&cert_clean)?;
         request.metadata_mut().insert("x-certificate", cert_value);
 
         let response = client.get_network_status(request).await?;
