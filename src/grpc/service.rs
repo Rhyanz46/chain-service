@@ -158,13 +158,44 @@ impl FileTransferService for FileTransferServiceImpl {
     ) -> Result<Response<UploadResponse>, Status> {
         debug!("🔥 upload_file: Starting upload request processing");
 
-        let node_id = self.authenticate_request(&request)?;
-        let client_ip = self.get_client_ip(&request)?;
+        // Log request metadata before authentication
+        debug!("📋 upload_file: Request metadata keys: {:?}", request.metadata().keys());
+        if let Some(cert) = request.metadata().get("x-certificate") {
+            debug!("🔐 upload_file: Certificate found in metadata: {} chars", cert.len());
+        } else {
+            warn!("⚠️  upload_file: No certificate found in request metadata!");
+        }
+
+        debug!("🔍 upload_file: Starting request authentication...");
+        let node_id = match self.authenticate_request(&request) {
+            Ok(id) => {
+                debug!("✅ upload_file: Authentication successful, node_id: {}", id);
+                id
+            },
+            Err(e) => {
+                error!("❌ upload_file: Authentication failed: {:?}", e);
+                return Err(e);
+            }
+        };
+
+        debug!("🌐 upload_file: Extracting client IP...");
+        let client_ip = match self.get_client_ip(&request) {
+            Ok(ip) => {
+                debug!("✅ upload_file: Client IP extracted: {}", ip);
+                ip
+            },
+            Err(e) => {
+                error!("❌ upload_file: Failed to get client IP: {:?}", e);
+                return Err(e);
+            }
+        };
 
         info!("📁 Receiving file upload from {} (node_id: {})", client_ip, node_id);
         debug!("🔍 upload_file: Client IP: {}, Node ID: {}", client_ip, node_id);
 
+        debug!("🔄 upload_file: Converting request to stream...");
         let mut stream = request.into_inner();
+        debug!("✅ upload_file: Stream created successfully");
         let mut writer: Option<crate::storage::file_manager::FileWriter> = None;
         let mut total_bytes = 0u64;
         let mut file_id = String::new();
@@ -175,17 +206,31 @@ impl FileTransferService for FileTransferServiceImpl {
 
         // Process chunks
         while let Some(chunk_result) = stream.next().await {
+            debug!("🔍 upload_file: Waiting for next chunk...");
             debug!("🔍 upload_file: Received chunk_result #{}", chunk_count + 1);
 
             let chunk = match chunk_result {
                 Ok(chunk) => {
                     debug!("✅ upload_file: Successfully parsed chunk #{}", chunk_count + 1);
-                    debug!("🔍 upload_file: Chunk data size: {}, has_metadata: {}",
-                        chunk.data.len(), chunk.metadata.is_some());
+                    debug!("🔍 upload_file: Chunk details:");
+                    debug!("  - Data size: {} bytes", chunk.data.len());
+                    debug!("  - Has metadata: {}", chunk.metadata.is_some());
+                    debug!("  - Chunk number: {}", chunk.chunk_number);
+                    debug!("  - Total chunks: {:?}", chunk.total_chunks);
+
+                    if chunk.metadata.is_some() {
+                        debug!("📋 upload_file: Metadata present in this chunk");
+                    } else {
+                        debug!("📦 upload_file: Pure data chunk");
+                    }
+
                     chunk
                 },
                 Err(e) => {
                     error!("❌ upload_file: Failed to parse chunk #{}: {:?}", chunk_count + 1, e);
+                    error!("🔍 upload_file: Error details - message: {}", e.message());
+                    error!("🔍 upload_file: Error details - code: {:?}", e.code());
+                    error!("🔍 upload_file: Error details - metadata: {:?}", e.metadata());
                     return Err(Status::internal(format!("Failed to parse metadata value: {:?}", e)));
                 }
             };

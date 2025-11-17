@@ -98,42 +98,72 @@ impl FileTransferClient {
             .to_string_lossy()
             .to_string();
 
-        info!("Uploading file: {}", filename);
+        info!("🚀 client: Starting upload process for file: {}", filename);
+        debug!("📁 client: File path: {}", file_path.display());
 
         // Get file metadata
-        let metadata = tokio::fs::metadata(file_path).await?;
+        debug!("🔍 client: Reading file metadata...");
+        let metadata = tokio::fs::metadata(file_path).await
+            .map_err(|e| {
+                error!("❌ client: Failed to read file metadata: {}", e);
+                e
+            })?;
         let file_size = metadata.len();
+        debug!("📊 client: File size: {} bytes", file_size);
 
         // Calculate checksum
-        let checksum = super::calculate_checksum(file_path).await?;
+        debug!("🔢 client: Calculating checksum...");
+        let checksum = super::calculate_checksum(file_path).await
+            .map_err(|e| {
+                error!("❌ client: Failed to calculate checksum: {}", e);
+                e
+            })?;
+        debug!("✅ client: Checksum: {}", checksum);
 
         // Read file chunks
-        let chunks = super::read_file_chunks(file_path, self.chunk_size).await?;
+        debug!("📦 client: Reading file chunks with size: {}", self.chunk_size);
+        let chunks = super::read_file_chunks(file_path, self.chunk_size).await
+            .map_err(|e| {
+                error!("❌ client: Failed to read file chunks: {}", e);
+                e
+            })?;
         let total_chunks = chunks.len() as u64;
+        debug!("📊 client: Total chunks to send: {}", total_chunks);
 
         // Clone values needed for the stream
         let source_ip = self.identity.address().ip().to_string();
+        debug!("🌐 client: Source IP: {}", source_ip);
 
         // Create stream
+        debug!("🔄 client: Creating file stream...");
         let stream = async_stream::stream! {
+            debug!("📤 client: Starting stream generation");
             // First chunk with metadata
             if let Some(first_chunk) = chunks.first() {
+                debug!("📋 client: Creating metadata for first chunk");
+                let file_metadata = FileMetadata {
+                    filename: filename.clone(),
+                    file_size,
+                    mime_type: mime_type.clone().unwrap_or_else(|| "application/octet-stream".to_string()),
+                    source_ip: source_ip.clone(),
+                    timestamp: std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs() as i64,
+                    checksum: checksum.clone(),
+                };
+
+                debug!("🔍 client: Metadata - filename: {}, size: {}, checksum: {}",
+                       file_metadata.filename, file_metadata.file_size, file_metadata.checksum);
+
+                debug!("📦 client: Yielding first chunk with metadata");
                 yield FileChunk {
-                    metadata: Some(FileMetadata {
-                        filename: filename.clone(),
-                        file_size,
-                        mime_type: mime_type.clone().unwrap_or_else(|| "application/octet-stream".to_string()),
-                        source_ip: source_ip.clone(),
-                        timestamp: std::time::SystemTime::now()
-                            .duration_since(std::time::UNIX_EPOCH)
-                            .unwrap()
-                            .as_secs() as i64,
-                        checksum: checksum.clone(),
-                    }),
+                    metadata: Some(file_metadata),
                     data: first_chunk.clone(),
                     chunk_number: 0,
                     total_chunks: Some(total_chunks),
                 };
+                debug!("✅ client: First chunk with metadata yielded successfully");
             }
 
             // Remaining chunks
@@ -148,12 +178,22 @@ impl FileTransferClient {
         };
 
         // Add certificate to metadata
+        debug!("🔐 client: Creating gRPC request with certificate metadata");
         let mut request = Request::new(stream);
-        let cert_value = MetadataValue::try_from(self.identity.certificate())?;
+
+        debug!("📜 client: Converting certificate to metadata value");
+        let cert_value = MetadataValue::try_from(self.identity.certificate())
+            .map_err(|e| {
+                error!("❌ client: Failed to convert certificate to metadata value: {}", e);
+                e
+            })?;
+
+        debug!("🔑 client: Certificate added to request metadata");
         request.metadata_mut().insert("x-certificate", cert_value);
 
         // Send the request
-        debug!("🔄 client: Sending upload request to server");
+        debug!("🚀 client: Preparing to send upload request to server");
+        debug!("📡 client: Calling gRPC upload_file method...");
 
         let response = match client.upload_file(request).await {
             Ok(response) => {
