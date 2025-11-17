@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tokio::time::{interval, Duration};
+use toml_edit;
 use tracing::{error, info, warn};
 use tracing_subscriber;
 
@@ -1233,13 +1234,71 @@ fn set_access_watch_folder(folder: &Path) -> Result<()> {
     }
 
     println!();
-    println!("✅ Done! The uploader daemon now has access to:");
-    println!("   {}", folder.display());
+
+    // Update config file
+    println!("📝 Updating config file...");
+
+    // Find config file
+    let config_path = if get_system_config_path().exists() {
+        get_system_config_path()
+    } else if get_dev_config_path().exists() {
+        get_dev_config_path()
+    } else {
+        println!("⚠️  No config file found. Please create config first with: uploader init-config");
+        println!();
+        println!("✅ Done! The uploader daemon now has access to:");
+        println!("   {}", folder.display());
+        return Ok(());
+    };
+
+    println!("📁 Config file: {}", config_path.display());
+
+    // Read and parse config
+    let config_content = fs::read_to_string(&config_path)
+        .with_context(|| format!("Failed to read config file: {}", config_path.display()))?;
+
+    let mut doc = config_content.parse::<toml_edit::DocumentMut>()
+        .with_context(|| "Failed to parse config file")?;
+
+    // Ensure auto_upload section exists
+    if !doc.contains_table("auto_upload") {
+        doc["auto_upload"] = toml_edit::table();
+    }
+
+    // Update watch_folder
+    doc["auto_upload"]["watch_folder"] = toml_edit::value(folder.to_str().unwrap());
+
+    // Enable auto_upload if not already enabled
+    if doc["auto_upload"]["enabled"].as_bool().unwrap_or(false) == false {
+        println!("🔄 Enabling auto_upload in config...");
+        doc["auto_upload"]["enabled"] = toml_edit::value(true);
+    }
+
+    // Ensure destination_servers array exists
+    if doc["auto_upload"].get("destination_servers").is_none() {
+        doc["auto_upload"]["destination_servers"] = toml_edit::value(toml_edit::Array::new());
+        println!("⚠️  Note: destination_servers is empty. Add server addresses to config.");
+    }
+
+    // Write back to file
+    fs::write(&config_path, doc.to_string())
+        .with_context(|| format!("Failed to write config file: {}", config_path.display()))?;
+
+    println!("✅ Config updated:");
+    println!("   - auto_upload.enabled = true");
+    println!("   - auto_upload.watch_folder = \"{}\"", folder.display());
+
+    println!();
+    println!("✅ Done! Auto upload is ready to use.");
+    println!();
+    println!("📋 Configuration:");
+    println!("   Config file: {}", config_path.display());
+    println!("   Watch folder: {}", folder.display());
+    println!("   Folder has proper access permissions");
     println!();
     println!("💡 Next steps:");
-    println!("   1. Update config: sudo uploader edit-config --config /etc/uploader/config.toml");
-    println!("   2. Set watch_folder = \"{}\"", folder.display());
-    println!("   3. Restart service: sudo systemctl restart uploader");
+    println!("   1. Add destination servers to config if needed");
+    println!("   2. Restart service: sudo systemctl restart uploader");
 
     Ok(())
 }
