@@ -14,14 +14,12 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tokio::time::{interval, Duration};
-use toml_edit;
 use tracing::{error, info, warn};
 use tracing_subscriber;
 
 use config::Config;
 use network::{FileTransferClient, FileTransferServer};
 use pki::{CertificateManager, CertificateValidator, NodeIdentity};
-use auto_upload::FileWatcher;
 use registry::{DistributedRegistry, NodeRegistry};
 use storage::{FileManager, StorageConfig};
 
@@ -111,14 +109,11 @@ enum Commands {
     /// Show version information
     Version,
 
-    /// Grant daemon user access to watch folder for auto upload
-    SetAccessWatchFolder {
-        /// Watch folder path
-        folder: PathBuf,
-    },
-
     /// Start the server
     Server,
+
+    /// Run auto upload daemon
+    AutoUpload,
 
     /// Upload a file to remote server(s)
     Upload {
@@ -241,16 +236,20 @@ async fn main() -> Result<()> {
             show_version();
         }
 
-        Some(Commands::SetAccessWatchFolder { folder }) => {
-            set_access_watch_folder(&folder)?;
-        }
-
         Some(Commands::Server) => {
             let config_path = discover_config(cli.config);
             let config = Config::from_file(&config_path)
                 .context("Failed to load config. Run 'uploader edit-config' first")?;
 
             run_server(config).await?;
+        }
+
+        Some(Commands::AutoUpload) => {
+            let config_path = discover_config(cli.config);
+            let config = Config::from_file(&config_path)
+                .context("Failed to load config. Run 'uploader edit-config' first")?;
+
+            run_auto_upload(config).await?;
         }
 
         Some(Commands::Upload {
@@ -432,34 +431,8 @@ async fn run_server(config: Config) -> Result<()> {
         }
     });
 
-    // Spawn auto upload task if enabled
-    let auto_upload_task = if config.auto_upload.enabled {
-        if config.auto_upload.destination_servers.is_empty() {
-            warn!("⚠️ Auto upload enabled but no destination servers configured");
-            None
-        } else {
-            info!("🔄 Starting auto upload task");
-            let auto_upload_config = config.auto_upload.clone();
-            let client = FileTransferClient::new(identity.clone(), config.storage.chunk_size);
-            let auto_upload_identity = identity.clone();
-
-            let task = tokio::spawn(async move {
-                let file_watcher = FileWatcher::new(auto_upload_config, client, auto_upload_identity);
-                if let Err(e) = file_watcher.start().await {
-                    error!("❌ Auto upload task failed: {}", e);
-                }
-            });
-            Some(task)
-        }
-    } else {
-        None
-    };
-
     info!("Server running on {}", config.node.listen_address);
     info!("P2P network running on port {}", config.network.p2p_port);
-    if config.auto_upload.enabled {
-        info!("🔄 Auto upload enabled - watching: {}", config.auto_upload.watch_folder.display());
-    }
 
     // Wait for tasks
     tokio::select! {
@@ -467,14 +440,6 @@ async fn run_server(config: Config) -> Result<()> {
         _ = registry_task => {},
         _ = event_task => {},
         _ = heartbeat_task => {},
-        _ = async {
-            if let Some(task) = auto_upload_task {
-                let _ = task.await;
-            } else {
-                // Block forever if auto upload is disabled
-                std::future::pending::<()>().await;
-            }
-        } => {},
     }
 
     Ok(())
@@ -1126,216 +1091,33 @@ fn show_version() {
     println!();
 }
 
-/// Set ACL permissions for watch folder to grant daemon user access
-fn set_access_watch_folder(folder: &Path) -> Result<()> {
-    use std::process::Command;
+async fn run_auto_upload(config: Config) -> Result<()> {
+    use auto_upload::FileWatcher;
 
-    println!("🔧 Setting up access for auto upload watch folder");
-    println!("📁 Folder: {}", folder.display());
-    println!();
+    info!("🔄 Starting auto upload daemon");
 
-    // Get systemd service user
-    let systemd_user_output = Command::new("systemctl")
-        .args(["show", "uploader", "-p", "User", "--value"])
-        .output();
-
-    let daemon_user = match systemd_user_output {
-        Ok(output) => {
-            let user = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if user.is_empty() {
-                "uploader".to_string()
-            } else {
-                user
-            }
-        }
-        Err(_) => "uploader".to_string(),
-    };
-
-    println!("👤 Daemon user: {}", daemon_user);
-    println!();
-
-    // Setup parent directory access first
-    if let Some(parent) = folder.parent() {
-        if parent.to_str().unwrap() != "/" && parent.to_str().unwrap() != "" {
-            println!("📂 Setting up parent directory access...");
-            println!("📂 Parent: {}", parent.display());
-
-            // Give execute permission to parent so daemon can traverse into it
-            let setfacl_parent = Command::new("setfacl")
-                .args(["-m", &format!("u:{}:x", daemon_user), parent.to_str().unwrap()])
-                .status();
-
-            match setfacl_parent {
-                Ok(status) if status.success() => {
-                    println!("✅ Parent directory accessible (ACL)");
-                }
-                _ => {
-                    // Try chmod fallback
-                    let chmod_result = Command::new("chmod")
-                        .args(["o+x", parent.to_str().unwrap()])
-                        .status();
-
-                    if chmod_result.is_ok() {
-                        println!("✅ Parent directory accessible (chmod)");
-                    } else {
-                        println!("⚠️  Could not set parent directory permissions");
-                        println!("⚠️  You may need to run: sudo chmod o+x {}", parent.display());
-                    }
-                }
-            }
-            println!();
-        }
+    // Validate auto upload config
+    if !config.auto_upload.enabled {
+        return Err(anyhow::anyhow!("Auto upload is not enabled in config"));
     }
 
-    // Create folder if doesn't exist
-    println!("📁 Setting up watch folder...");
-    if !folder.exists() {
-        println!("📁 Creating folder...");
-        fs::create_dir_all(folder)
-            .with_context(|| format!("Failed to create folder: {}", folder.display()))?;
-        println!("✅ Folder created");
-    } else {
-        println!("✅ Folder already exists");
+    if config.auto_upload.destination_servers.is_empty() {
+        return Err(anyhow::anyhow!("No destination servers configured for auto upload"));
     }
 
-    // Try to set ACL permissions
-    println!("🔐 Setting ACL permissions for watch folder...");
+    // Load or generate identity
+    let identity = load_or_generate_identity(&config).await?;
 
-    let setfacl_result = Command::new("setfacl")
-        .args(["-R", "-m", &format!("u:{}:rwx", daemon_user), folder.to_str().unwrap()])
-        .status();
+    info!("Node ID: {}", identity.node_id);
+    info!("Watch folder: {}", config.auto_upload.watch_folder.display());
+    info!("Destination servers: {:?}", config.auto_upload.destination_servers);
 
-    match setfacl_result {
-        Ok(status) if status.success() => {
-            println!("✅ ACL permissions set successfully");
+    // Create file transfer client
+    let client = FileTransferClient::new(identity.clone(), config.storage.chunk_size);
 
-            // Set default ACL for new files
-            let _ = Command::new("setfacl")
-                .args(["-d", "-m", &format!("u:{}:rwx", daemon_user), folder.to_str().unwrap()])
-                .status();
-
-            println!("✅ Default ACL set for new files");
-        }
-        _ => {
-            println!("⚠️  ACL not available, using group-based permissions...");
-
-            // Get folder owner
-            let stat_output = Command::new("stat")
-                .args(["-c", "%U", folder.to_str().unwrap()])
-                .output()
-                .or_else(|_| {
-                    Command::new("stat")
-                        .args(["-f", "%Su", folder.to_str().unwrap()])
-                        .output()
-                })?;
-
-            let folder_owner = String::from_utf8_lossy(&stat_output.stdout).trim().to_string();
-            println!("👤 Folder owner: {}", folder_owner);
-
-            // Add daemon user to folder owner's group
-            let usermod_result = Command::new("usermod")
-                .args(["-a", "-G", &folder_owner, &daemon_user])
-                .status();
-
-            if let Ok(status) = usermod_result {
-                if status.success() {
-                    println!("✅ Added {} to {} group", daemon_user, folder_owner);
-                }
-            }
-
-            // Set group permissions
-            Command::new("chmod")
-                .args(["g+rwx", folder.to_str().unwrap()])
-                .status()?;
-
-            println!("✅ Group permissions set");
-        }
-    }
-
-    println!();
-    println!("📋 Folder permissions:");
-    let ls_output = Command::new("ls")
-        .args(["-ld", folder.to_str().unwrap()])
-        .output()?;
-    println!("{}", String::from_utf8_lossy(&ls_output.stdout));
-
-    // Try to show ACL
-    if let Ok(getfacl_output) = Command::new("getfacl")
-        .arg(folder.to_str().unwrap())
-        .output()
-    {
-        if !getfacl_output.stdout.is_empty() {
-            println!("📋 ACL permissions:");
-            println!("{}", String::from_utf8_lossy(&getfacl_output.stdout));
-        }
-    }
-
-    println!();
-
-    // Update config file
-    println!("📝 Updating config file...");
-
-    // Find config file
-    let config_path = if get_system_config_path().exists() {
-        get_system_config_path()
-    } else if get_dev_config_path().exists() {
-        get_dev_config_path()
-    } else {
-        println!("⚠️  No config file found. Please create config first with: uploader init-config");
-        println!();
-        println!("✅ Done! The uploader daemon now has access to:");
-        println!("   {}", folder.display());
-        return Ok(());
-    };
-
-    println!("📁 Config file: {}", config_path.display());
-
-    // Read and parse config
-    let config_content = fs::read_to_string(&config_path)
-        .with_context(|| format!("Failed to read config file: {}", config_path.display()))?;
-
-    let mut doc = config_content.parse::<toml_edit::DocumentMut>()
-        .with_context(|| "Failed to parse config file")?;
-
-    // Ensure auto_upload section exists
-    if !doc.contains_table("auto_upload") {
-        doc["auto_upload"] = toml_edit::table();
-    }
-
-    // Update watch_folder
-    doc["auto_upload"]["watch_folder"] = toml_edit::value(folder.to_str().unwrap());
-
-    // Enable auto_upload if not already enabled
-    if doc["auto_upload"]["enabled"].as_bool().unwrap_or(false) == false {
-        println!("🔄 Enabling auto_upload in config...");
-        doc["auto_upload"]["enabled"] = toml_edit::value(true);
-    }
-
-    // Ensure destination_servers array exists
-    if doc["auto_upload"].get("destination_servers").is_none() {
-        doc["auto_upload"]["destination_servers"] = toml_edit::value(toml_edit::Array::new());
-        println!("⚠️  Note: destination_servers is empty. Add server addresses to config.");
-    }
-
-    // Write back to file
-    fs::write(&config_path, doc.to_string())
-        .with_context(|| format!("Failed to write config file: {}", config_path.display()))?;
-
-    println!("✅ Config updated:");
-    println!("   - auto_upload.enabled = true");
-    println!("   - auto_upload.watch_folder = \"{}\"", folder.display());
-
-    println!();
-    println!("✅ Done! Auto upload is ready to use.");
-    println!();
-    println!("📋 Configuration:");
-    println!("   Config file: {}", config_path.display());
-    println!("   Watch folder: {}", folder.display());
-    println!("   Folder has proper access permissions");
-    println!();
-    println!("💡 Next steps:");
-    println!("   1. Add destination servers to config if needed");
-    println!("   2. Restart service: sudo systemctl restart uploader");
+    // Create and start file watcher
+    let file_watcher = FileWatcher::new(config.auto_upload, client, identity);
+    file_watcher.start().await?;
 
     Ok(())
 }

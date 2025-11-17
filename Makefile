@@ -106,6 +106,49 @@ uninstall-service:
 	@chmod +x scripts/uninstall-systemd.sh
 	@sudo scripts/uninstall-systemd.sh
 
+## install-autoupload-service: Install auto upload daemon as systemd service (usage: make install-autoupload-service USER=dev)
+install-autoupload-service: release
+	@if [ -z "$(USER)" ]; then \
+		echo "$(RED)Error: USER is required$(NC)"; \
+		echo "Usage: make install-autoupload-service USER=dev"; \
+		exit 1; \
+	fi
+	@echo "$(BLUE)Installing auto upload systemd service...$(NC)"
+	@chmod +x scripts/install-autoupload-systemd.sh
+	@sudo scripts/install-autoupload-systemd.sh $(USER)
+
+## uninstall-autoupload-service: Uninstall auto upload daemon systemd service (requires sudo)
+uninstall-autoupload-service:
+	@echo "$(YELLOW)Uninstalling auto upload systemd service...$(NC)"
+	@chmod +x scripts/uninstall-autoupload-systemd.sh
+	@sudo scripts/uninstall-autoupload-systemd.sh
+
+## autoupload-status: Show auto upload service status
+autoupload-status:
+	@sudo systemctl status uploader-autoupload.service || true
+
+## autoupload-start: Start auto upload service
+autoupload-start:
+	@echo "$(BLUE)Starting auto upload service...$(NC)"
+	@sudo systemctl start uploader-autoupload.service
+	@echo "$(GREEN)✓ Auto upload service started$(NC)"
+
+## autoupload-stop: Stop auto upload service
+autoupload-stop:
+	@echo "$(YELLOW)Stopping auto upload service...$(NC)"
+	@sudo systemctl stop uploader-autoupload.service
+	@echo "$(GREEN)✓ Auto upload service stopped$(NC)"
+
+## autoupload-restart: Restart auto upload service
+autoupload-restart:
+	@echo "$(BLUE)Restarting auto upload service...$(NC)"
+	@sudo systemctl restart uploader-autoupload.service
+	@echo "$(GREEN)✓ Auto upload service restarted$(NC)"
+
+## autoupload-logs: View auto upload service logs
+autoupload-logs:
+	@sudo journalctl -u uploader-autoupload.service -f
+
 ## setup-multi: Setup multiple instances (usage: make setup-multi NUM=3 PORT=50051)
 setup-multi: release
 	@if [ -z "$(NUM)" ]; then \
