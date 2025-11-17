@@ -1,6 +1,6 @@
 [package]
 name = "uploader"
-version = "0.1.8-auto-upload-integrated"
+version = "0.1.9"
 edition = "2021"
 
 [dependencies]
