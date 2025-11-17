@@ -1,6 +1,6 @@
 [package]
 name = "uploader"
-version = "0.1.2-enhanced-debug"
+version = "0.1.3-cert-fix"
 edition = "2021"
 
 [dependencies]
