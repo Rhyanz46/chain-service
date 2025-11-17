@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use tokio::time::{interval, Duration};
 use tracing::{error, info, warn};
@@ -98,7 +98,11 @@ enum Commands {
     },
 
     /// Edit system configuration interactively
-    EditConfig,
+    EditConfig {
+        /// Configuration file path
+        #[arg(short, long)]
+        config: Option<PathBuf>,
+    },
 
     /// Show version information
     Version,
@@ -214,8 +218,13 @@ async fn main() -> Result<()> {
             generate_certificate(&name, &address, &cert_out, &key_out).await?;
         }
 
-        Some(Commands::EditConfig) => {
-            edit_config_interactively().await?;
+        Some(Commands::EditConfig { config }) => {
+            let config_path = if let Some(path) = config {
+                path
+            } else {
+                discover_config(cli.config)
+            };
+            edit_config_interactively(&config_path).await?;
         }
 
         Some(Commands::Version) => {
@@ -618,8 +627,7 @@ async fn load_or_generate_identity(config: &Config) -> Result<NodeIdentity> {
     }
 }
 
-async fn edit_config_interactively() -> Result<()> {
-    let config_path = get_system_config_path();
+async fn edit_config_interactively(config_path: &Path) -> Result<()> {
 
     println!("🔧 Interactive Configuration Editor");
     println!("================================");
