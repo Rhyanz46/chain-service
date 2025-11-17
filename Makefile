@@ -1,4 +1,4 @@
-.PHONY: help build release test clean install run dev fmt lint check docs setup-dev setup-cluster benchmark health-check docker-build docker-up docker-down set-systemd-user grant-watch-folder-access
+.PHONY: help build release test clean install run dev fmt lint check docs setup-dev setup-cluster benchmark health-check docker-build docker-up docker-down
 
 # Configuration
 BINARY_NAME = uploader
@@ -164,60 +164,6 @@ service-debug-stop:
 	@sudo systemctl daemon-reload
 	@sudo systemctl restart uploader
 	@echo "$(GREEN)✓ Debug logging disabled - service restarted$(NC)"
-
-## set-systemd-user: Set systemd service user (usage: make set-systemd-user USER=username)
-set-systemd-user:
-	@if [ -z "$(USER)" ]; then \
-		echo "$(RED)❌ Error: USER parameter required$(NC)"; \
-		echo "$(YELLOW)Usage: make set-systemd-user USER=username$(NC)"; \
-		exit 1; \
-	fi
-	@echo "$(BLUE)🔧 Setting systemd service user to: $(USER)$(NC)"
-	@if [ ! -f /etc/systemd/system/uploader.service ]; then \
-		echo "$(RED)❌ Error: Service file not found. Run 'make install-service' first$(NC)"; \
-		exit 1; \
-	fi
-	@echo "$(YELLOW)📝 Updating service file...$(NC)"
-	@sudo sed -i 's/^User=.*/User=$(USER)/' /etc/systemd/system/uploader.service
-	@sudo sed -i 's/^Group=.*/Group=$(USER)/' /etc/systemd/system/uploader.service
-	@echo "$(YELLOW)🔄 Reloading systemd daemon...$(NC)"
-	@sudo systemctl daemon-reload
-	@echo "$(YELLOW)🔄 Restarting service...$(NC)"
-	@sudo systemctl restart uploader
-	@echo "$(GREEN)✓ Systemd user changed to: $(USER)$(NC)"
-	@echo ""
-	@echo "$(BLUE)📋 Service Status:$(NC)"
-	@sudo systemctl status uploader --no-pager -l | head -20
-
-## grant-watch-folder-access: Grant uploader user access to watch folder (usage: make grant-watch-folder-access FOLDER=/path/to/folder)
-grant-watch-folder-access:
-	@if [ -z "$(FOLDER)" ]; then \
-		echo "$(RED)❌ Error: FOLDER parameter required$(NC)"; \
-		echo "$(YELLOW)Usage: make grant-watch-folder-access FOLDER=/path/to/folder$(NC)"; \
-		echo "$(YELLOW)Example: make grant-watch-folder-access FOLDER=/home/rhyanz46/uploads$(NC)"; \
-		exit 1; \
-	fi
-	@echo "$(BLUE)🔧 Granting uploader user access to: $(FOLDER)$(NC)"
-	@DAEMON_USER=$$(sudo systemctl show uploader -p User --value 2>/dev/null || echo "uploader"); \
-	echo "$(YELLOW)📋 Systemd user: $$DAEMON_USER$(NC)"; \
-	if [ ! -d "$(FOLDER)" ]; then \
-		echo "$(YELLOW)📁 Creating folder: $(FOLDER)$(NC)"; \
-		sudo mkdir -p "$(FOLDER)"; \
-	fi; \
-	echo "$(YELLOW)🔐 Setting ACL permissions...$(NC)"; \
-	sudo setfacl -R -m u:$$DAEMON_USER:rwx "$(FOLDER)" 2>/dev/null || { \
-		echo "$(YELLOW)⚠️  ACL not available, using group-based permissions...$(NC)"; \
-		FOLDER_OWNER=$$(stat -c '%U' "$(FOLDER)" 2>/dev/null || stat -f '%Su' "$(FOLDER)"); \
-		echo "$(YELLOW)👤 Folder owner: $$FOLDER_OWNER$(NC)"; \
-		sudo usermod -a -G $$FOLDER_OWNER $$DAEMON_USER 2>/dev/null || true; \
-		sudo chmod g+rwx "$(FOLDER)"; \
-		echo "$(GREEN)✓ Added $$DAEMON_USER to $$FOLDER_OWNER group$(NC)"; \
-	}; \
-	sudo setfacl -d -m u:$$DAEMON_USER:rwx "$(FOLDER)" 2>/dev/null || true; \
-	echo "$(GREEN)✓ Access granted to $$DAEMON_USER$(NC)"; \
-	echo "$(BLUE)📋 Folder permissions:$(NC)"; \
-	ls -ld "$(FOLDER)"; \
-	getfacl "$(FOLDER)" 2>/dev/null || echo "$(YELLOW)ACL not available$(NC)"
 
 ## run: Run debug binary as server
 run: build
