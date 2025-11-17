@@ -1152,17 +1152,54 @@ fn set_access_watch_folder(folder: &Path) -> Result<()> {
     };
 
     println!("👤 Daemon user: {}", daemon_user);
+    println!();
+
+    // Setup parent directory access first
+    if let Some(parent) = folder.parent() {
+        if parent.to_str().unwrap() != "/" && parent.to_str().unwrap() != "" {
+            println!("📂 Setting up parent directory access...");
+            println!("📂 Parent: {}", parent.display());
+
+            // Give execute permission to parent so daemon can traverse into it
+            let setfacl_parent = Command::new("setfacl")
+                .args(["-m", &format!("u:{}:x", daemon_user), parent.to_str().unwrap()])
+                .status();
+
+            match setfacl_parent {
+                Ok(status) if status.success() => {
+                    println!("✅ Parent directory accessible (ACL)");
+                }
+                _ => {
+                    // Try chmod fallback
+                    let chmod_result = Command::new("chmod")
+                        .args(["o+x", parent.to_str().unwrap()])
+                        .status();
+
+                    if chmod_result.is_ok() {
+                        println!("✅ Parent directory accessible (chmod)");
+                    } else {
+                        println!("⚠️  Could not set parent directory permissions");
+                        println!("⚠️  You may need to run: sudo chmod o+x {}", parent.display());
+                    }
+                }
+            }
+            println!();
+        }
+    }
 
     // Create folder if doesn't exist
+    println!("📁 Setting up watch folder...");
     if !folder.exists() {
         println!("📁 Creating folder...");
         fs::create_dir_all(folder)
             .with_context(|| format!("Failed to create folder: {}", folder.display()))?;
         println!("✅ Folder created");
+    } else {
+        println!("✅ Folder already exists");
     }
 
     // Try to set ACL permissions
-    println!("🔐 Setting ACL permissions...");
+    println!("🔐 Setting ACL permissions for watch folder...");
 
     let setfacl_result = Command::new("setfacl")
         .args(["-R", "-m", &format!("u:{}:rwx", daemon_user), folder.to_str().unwrap()])
