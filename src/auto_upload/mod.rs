@@ -15,14 +15,21 @@ pub struct FileWatcher {
     config: AutoUploadConfig,
     client: FileTransferClient,
     identity: NodeIdentity,
+    telegram_config: Option<crate::config::TelegramConfig>,
 }
 
 impl FileWatcher {
-    pub fn new(config: AutoUploadConfig, client: FileTransferClient, identity: NodeIdentity) -> Self {
+    pub fn new(
+        config: AutoUploadConfig,
+        client: FileTransferClient,
+        identity: NodeIdentity,
+        telegram_config: Option<crate::config::TelegramConfig>
+    ) -> Self {
         Self {
             config,
             client,
             identity,
+            telegram_config,
         }
     }
 
@@ -255,6 +262,38 @@ impl FileWatcher {
             }
         }
 
+        // Send Telegram notification
+        if let Some(telegram_config) = &self.telegram_config {
+            if telegram_config.enabled && !telegram_config.bot_token.is_empty() && !telegram_config.chat_id.is_empty() {
+                if success_count > 0 {
+                    // Success notification
+                    if let Err(e) = crate::send_telegram_success_notification(
+                        &telegram_config.bot_token,
+                        &telegram_config.chat_id,
+                        &telegram_config.success_title,
+                        file_path,
+                        get_file_size(file_path).unwrap_or(0),
+                        &normalized_servers,
+                        telegram_config.include_details,
+                    ).await {
+                        warn!("Failed to send Telegram success notification: {}", e);
+                    }
+                } else {
+                    // Failure notification
+                    if let Err(e) = crate::send_telegram_failure_notification(
+                        &telegram_config.bot_token,
+                        &telegram_config.chat_id,
+                        &telegram_config.failure_title,
+                        file_path,
+                        "All upload attempts failed",
+                        telegram_config.include_details,
+                    ).await {
+                        warn!("Failed to send Telegram failure notification: {}", e);
+                    }
+                }
+            }
+        }
+
         if success_count > 0 {
             info!("🎯 Upload summary: {} successful, {} failed", success_count, failure_count);
             Ok(())
@@ -294,6 +333,11 @@ impl FileWatcher {
         debug!("🏷️ Renamed to: {}", new_path.display());
         Ok(())
     }
+}
+
+/// Get file size safely
+fn get_file_size(file_path: &Path) -> Option<u64> {
+    std::fs::metadata(file_path).ok().map(|m| m.len())
 }
 
 /// Check if directory entry is hidden

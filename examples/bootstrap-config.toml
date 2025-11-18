@@ -1,0 +1,43 @@
+# Bootstrap Node Configuration Example
+# This is the first node that starts the distributed network
+
+[node]
+name = "bootstrap-main"
+listen_address = "0.0.0.0:50051"
+certificate_path = "/etc/uploader/certs/node.crt"
+private_key_path = "/etc/uploader/certs/node.key"
+
+[network]
+# P2P port for node communication (libp2p)
+p2p_port = 9000
+# Empty bootstrap nodes list - this is the first node
+bootstrap_nodes = []
+heartbeat_interval = 30  # seconds
+node_timeout = 300      # seconds (5 minutes)
+
+[storage]
+# Central storage location for production
+root_dir = "/var/lib/uploader/storage"
+max_file_size = 1073741824  # 1GB
+chunk_size = 1048576        # 1MB
+
+[security]
+# IMPORTANT: Change this to a strong, unique secret for production!
+network_secret = "your-super-secure-production-network-secret-change-this!"
+allow_self_signed = false    # Use proper CA-signed certificates in production
+cert_validity_days = 365
+require_mtls = true          # Enforce mutual authentication
+
+[network_ids]
+# Enable ID management for production networks
+enabled = true
+ids_config_path = "/etc/uploader/network_ids.toml"
+state_db_path = "/var/lib/uploader/network_state.json"
+reservation_timeout = 300    # 5 minutes
+offline_threshold = 86400    # 24 hours
+cleanup_interval = 3600      # 1 hour
+auto_recovery = true
+
+[logging]
+level = "info"
+file_path = "/var/log/uploader.log"

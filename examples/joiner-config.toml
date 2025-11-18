@@ -1,0 +1,43 @@
+# Joiner Node Configuration Example
+# This node joins an existing distributed network
+
+[node]
+name = "worker-node-1"
+listen_address = "0.0.0.0:50051"
+certificate_path = "/etc/uploader/certs/node.crt"
+private_key_path = "/etc/uploader/certs/node.key"
+
+[network]
+# P2P port for node communication
+p2p_port = 9000
+# Bootstrap nodes - address of the main bootstrap node
+bootstrap_nodes = ["192.168.1.10:9000"]  # Replace with actual bootstrap node IP:PORT
+heartbeat_interval = 30  # seconds
+node_timeout = 300      # seconds
+
+[storage]
+# Local storage - can be different from bootstrap node
+root_dir = "/var/lib/uploader/storage"
+max_file_size = 1073741824  # 1GB
+chunk_size = 1048576        # 1MB
+
+[security]
+# IMPORTANT: Must be the SAME secret as bootstrap node!
+network_secret = "your-super-secure-production-network-secret-change-this!"
+allow_self_signed = false    # Match bootstrap node setting
+cert_validity_days = 365
+require_mtls = true          # Match bootstrap node setting
+
+[network_ids]
+# Enable ID management - must match bootstrap node
+enabled = true
+ids_config_path = "/etc/uploader/network_ids.toml"
+state_db_path = "/var/lib/uploader/network_state.json"
+reservation_timeout = 300    # 5 minutes
+offline_threshold = 86400    # 24 hours
+cleanup_interval = 3600      # 1 hour
+auto_recovery = true
+
+[logging]
+level = "info"
+file_path = "/var/log/uploader.log"

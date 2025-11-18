@@ -1,0 +1,41 @@
+# Development Configuration Example
+# For local development and testing
+
+[node]
+name = "dev-node-1"
+listen_address = "127.0.0.1:50051"  # Localhost only
+certificate_path = "./certs/node.crt"
+private_key_path = "./certs/node.key"
+
+[network]
+p2p_port = 9000
+# For joining existing dev network
+bootstrap_nodes = ["127.0.0.1:9000"]  # or ["192.168.1.10:9000"] for multiple nodes
+heartbeat_interval = 10  # Faster heartbeat for dev
+node_timeout = 60        # Faster timeout for dev
+
+[storage]
+root_dir = "./storage"     # Local directory
+max_file_size = 104857600  # 100MB (smaller for dev)
+chunk_size = 65536         # 64KB (smaller for dev)
+
+[security]
+# Development secret - NOT secure for production!
+network_secret = "development-secret-not-secure"
+allow_self_signed = true   # Allow self-signed for easier development
+cert_validity_days = 30    # Shorter validity for dev
+require_mtls = false       # Disable mTLS for easier dev setup
+
+[network_ids]
+# Enable ID management for testing
+enabled = true
+ids_config_path = "./config/network_ids.toml"
+state_db_path = "./data/network_state.json"
+reservation_timeout = 60   # Shorter for dev
+offline_threshold = 300    # 5 minutes for dev
+cleanup_interval = 60      # 1 minute for dev
+auto_recovery = true
+
+[logging]
+level = "debug"  # More verbose for development
+file_path = "./logs/uploader.log"

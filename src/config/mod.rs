@@ -25,6 +25,10 @@ pub struct Config {
     /// Auto upload configuration
     #[serde(default)]
     pub auto_upload: AutoUploadConfig,
+
+    /// Telegram notification configuration
+    #[serde(default)]
+    pub telegram: TelegramConfig,
 }
 
 /// Node configuration
@@ -159,6 +163,34 @@ pub struct AutoUploadConfig {
     pub upload_suffix: String,
 }
 
+/// Telegram notification configuration
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TelegramConfig {
+    /// Enable telegram notifications
+    #[serde(default)]
+    pub enabled: bool,
+
+    /// Bot token
+    #[serde(default)]
+    pub bot_token: String,
+
+    /// Chat ID (user or group)
+    #[serde(default)]
+    pub chat_id: String,
+
+    /// Custom success message title
+    #[serde(default)]
+    pub success_title: String,
+
+    /// Custom failure message title
+    #[serde(default)]
+    pub failure_title: String,
+
+    /// Include file details in notifications
+    #[serde(default = "default_include_details")]
+    pub include_details: bool,
+}
+
 impl Default for AutoUploadConfig {
     fn default() -> Self {
         Self {
@@ -174,6 +206,19 @@ impl Default for AutoUploadConfig {
     }
 }
 
+impl Default for TelegramConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            bot_token: String::new(),
+            chat_id: String::new(),
+            success_title: "✅ Upload Berhasil!".to_string(),
+            failure_title: "❌ Upload Gagal!".to_string(),
+            include_details: true,
+        }
+    }
+}
+
 // Default values for configuration options
 fn default_reservation_timeout() -> u64 { 300 } // 5 minutes
 fn default_offline_threshold() -> u64 { 86400 } // 24 hours
@@ -185,6 +230,9 @@ fn default_scan_interval() -> u64 { 60 } // 1 minute
 fn default_max_file_size() -> u64 { 1073741824 } // 1GB
 fn default_rename_after_upload() -> bool { true }
 fn default_upload_suffix() -> String { "_uploaded".to_string() }
+
+// Default values for telegram configuration
+fn default_include_details() -> bool { true }
 
 impl Default for Config {
     fn default() -> Self {
@@ -237,6 +285,14 @@ impl Default for Config {
                 max_file_size: 1073741824, // 1GB
                 rename_after_upload: true,
                 upload_suffix: "_uploaded".to_string(),
+            },
+            telegram: TelegramConfig {
+                enabled: false,
+                bot_token: String::new(),
+                chat_id: String::new(),
+                success_title: "✅ Upload Berhasil!".to_string(),
+                failure_title: "❌ Upload Gagal!".to_string(),
+                include_details: true,
             },
         }
     }

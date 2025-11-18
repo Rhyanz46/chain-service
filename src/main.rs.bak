@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tokio::time::{interval, Duration};
+use toml_edit;
 use tracing::{error, info, warn};
 use tracing_subscriber;
 
@@ -114,13 +115,6 @@ enum Commands {
 
     /// Run auto upload daemon
     AutoUpload,
-
-    /// Configure telegram notifications for auto upload
-    SetTelegram {
-        /// Custom success message title
-        #[arg(short, long)]
-        success_title: Option<String>,
-    },
 
     /// Upload a file to remote server(s)
     Upload {
@@ -257,11 +251,6 @@ async fn main() -> Result<()> {
                 .context("Failed to load config. Run 'uploader edit-config' first")?;
 
             run_auto_upload(config).await?;
-        }
-
-        Some(Commands::SetTelegram { success_title }) => {
-            let config_path = discover_config(cli.config);
-            set_telegram_config(&config_path, success_title)?;
         }
 
         Some(Commands::Upload {
@@ -1103,40 +1092,216 @@ fn show_version() {
     println!();
 }
 
-async fn run_auto_upload(config: Config) -> Result<()> {
-    use auto_upload::FileWatcher;
+/// Set ACL permissions for watch folder to grant daemon user access
+fn set_access_watch_folder(folder: &Path) -> Result<()> {
+    use std::process::Command;
 
-    info!("🔄 Starting auto upload daemon");
+    println!("🔧 Setting up access for auto upload watch folder");
+    println!("📁 Folder: {}", folder.display());
+    println!();
 
-    // Validate auto upload config
-    if !config.auto_upload.enabled {
-        return Err(anyhow::anyhow!("Auto upload is not enabled in config"));
-    }
+    // Get systemd service user
+    let systemd_user_output = Command::new("systemctl")
+        .args(["show", "uploader", "-p", "User", "--value"])
+        .output();
 
-    if config.auto_upload.destination_servers.is_empty() {
-        return Err(anyhow::anyhow!("No destination servers configured for auto upload"));
-    }
-
-    // Load or generate identity
-    let identity = load_or_generate_identity(&config).await?;
-
-    info!("Node ID: {}", identity.node_id);
-    info!("Watch folder: {}", config.auto_upload.watch_folder.display());
-    info!("Destination servers: {:?}", config.auto_upload.destination_servers);
-
-    // Create file transfer client
-    let client = FileTransferClient::new(identity.clone(), config.storage.chunk_size);
-
-    // Check if telegram notifications are enabled
-    let telegram_config = if config.telegram.enabled {
-        Some(config.telegram.clone())
-    } else {
-        None
+    let daemon_user = match systemd_user_output {
+        Ok(output) => {
+            let user = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if user.is_empty() {
+                "uploader".to_string()
+            } else {
+                user
+            }
+        }
+        Err(_) => "uploader".to_string(),
     };
 
-    // Create and start file watcher
-    let file_watcher = FileWatcher::new(config.auto_upload, client, identity, telegram_config);
-    file_watcher.start().await?;
+    println!("👤 Daemon user: {}", daemon_user);
+    println!();
+
+    // Setup parent directory access first
+    if let Some(parent) = folder.parent() {
+        if parent.to_str().unwrap() != "/" && parent.to_str().unwrap() != "" {
+            println!("📂 Setting up parent directory access...");
+            println!("📂 Parent: {}", parent.display());
+
+            // Give execute permission to parent so daemon can traverse into it
+            let setfacl_parent = Command::new("setfacl")
+                .args(["-m", &format!("u:{}:x", daemon_user), parent.to_str().unwrap()])
+                .status();
+
+            match setfacl_parent {
+                Ok(status) if status.success() => {
+                    println!("✅ Parent directory accessible (ACL)");
+                }
+                _ => {
+                    // Try chmod fallback
+                    let chmod_result = Command::new("chmod")
+                        .args(["o+x", parent.to_str().unwrap()])
+                        .status();
+
+                    if chmod_result.is_ok() {
+                        println!("✅ Parent directory accessible (chmod)");
+                    } else {
+                        println!("⚠️  Could not set parent directory permissions");
+                        println!("⚠️  You may need to run: sudo chmod o+x {}", parent.display());
+                    }
+                }
+            }
+            println!();
+        }
+    }
+
+    // Create folder if doesn't exist
+    println!("📁 Setting up watch folder...");
+    if !folder.exists() {
+        println!("📁 Creating folder...");
+        fs::create_dir_all(folder)
+            .with_context(|| format!("Failed to create folder: {}", folder.display()))?;
+        println!("✅ Folder created");
+    } else {
+        println!("✅ Folder already exists");
+    }
+
+    // Try to set ACL permissions
+    println!("🔐 Setting ACL permissions for watch folder...");
+
+    let setfacl_result = Command::new("setfacl")
+        .args(["-R", "-m", &format!("u:{}:rwx", daemon_user), folder.to_str().unwrap()])
+        .status();
+
+    match setfacl_result {
+        Ok(status) if status.success() => {
+            println!("✅ ACL permissions set successfully");
+
+            // Set default ACL for new files
+            let _ = Command::new("setfacl")
+                .args(["-d", "-m", &format!("u:{}:rwx", daemon_user), folder.to_str().unwrap()])
+                .status();
+
+            println!("✅ Default ACL set for new files");
+        }
+        _ => {
+            println!("⚠️  ACL not available, using group-based permissions...");
+
+            // Get folder owner
+            let stat_output = Command::new("stat")
+                .args(["-c", "%U", folder.to_str().unwrap()])
+                .output()
+                .or_else(|_| {
+                    Command::new("stat")
+                        .args(["-f", "%Su", folder.to_str().unwrap()])
+                        .output()
+                })?;
+
+            let folder_owner = String::from_utf8_lossy(&stat_output.stdout).trim().to_string();
+            println!("👤 Folder owner: {}", folder_owner);
+
+            // Add daemon user to folder owner's group
+            let usermod_result = Command::new("usermod")
+                .args(["-a", "-G", &folder_owner, &daemon_user])
+                .status();
+
+            if let Ok(status) = usermod_result {
+                if status.success() {
+                    println!("✅ Added {} to {} group", daemon_user, folder_owner);
+                }
+            }
+
+            // Set group permissions
+            Command::new("chmod")
+                .args(["g+rwx", folder.to_str().unwrap()])
+                .status()?;
+
+            println!("✅ Group permissions set");
+        }
+    }
+
+    println!();
+    println!("📋 Folder permissions:");
+    let ls_output = Command::new("ls")
+        .args(["-ld", folder.to_str().unwrap()])
+        .output()?;
+    println!("{}", String::from_utf8_lossy(&ls_output.stdout));
+
+    // Try to show ACL
+    if let Ok(getfacl_output) = Command::new("getfacl")
+        .arg(folder.to_str().unwrap())
+        .output()
+    {
+        if !getfacl_output.stdout.is_empty() {
+            println!("📋 ACL permissions:");
+            println!("{}", String::from_utf8_lossy(&getfacl_output.stdout));
+        }
+    }
+
+    println!();
+
+    // Update config file
+    println!("📝 Updating config file...");
+
+    // Find config file
+    let config_path = if get_system_config_path().exists() {
+        get_system_config_path()
+    } else if get_dev_config_path().exists() {
+        get_dev_config_path()
+    } else {
+        println!("⚠️  No config file found. Please create config first with: uploader init-config");
+        println!();
+        println!("✅ Done! The uploader daemon now has access to:");
+        println!("   {}", folder.display());
+        return Ok(());
+    };
+
+    println!("📁 Config file: {}", config_path.display());
+
+    // Read and parse config
+    let config_content = fs::read_to_string(&config_path)
+        .with_context(|| format!("Failed to read config file: {}", config_path.display()))?;
+
+    let mut doc = config_content.parse::<toml_edit::DocumentMut>()
+        .with_context(|| "Failed to parse config file")?;
+
+    // Ensure auto_upload section exists
+    if !doc.contains_table("auto_upload") {
+        doc["auto_upload"] = toml_edit::table();
+    }
+
+    // Update watch_folder
+    doc["auto_upload"]["watch_folder"] = toml_edit::value(folder.to_str().unwrap());
+
+    // Enable auto_upload if not already enabled
+    if doc["auto_upload"]["enabled"].as_bool().unwrap_or(false) == false {
+        println!("🔄 Enabling auto_upload in config...");
+        doc["auto_upload"]["enabled"] = toml_edit::value(true);
+    }
+
+    // Ensure destination_servers array exists
+    if doc["auto_upload"].get("destination_servers").is_none() {
+        doc["auto_upload"]["destination_servers"] = toml_edit::value(toml_edit::Array::new());
+        println!("⚠️  Note: destination_servers is empty. Add server addresses to config.");
+    }
+
+    // Write back to file
+    fs::write(&config_path, doc.to_string())
+        .with_context(|| format!("Failed to write config file: {}", config_path.display()))?;
+
+    println!("✅ Config updated:");
+    println!("   - auto_upload.enabled = true");
+    println!("   - auto_upload.watch_folder = \"{}\"", folder.display());
+
+    println!();
+    println!("✅ Done! Auto upload is ready to use.");
+    println!();
+    println!("📋 Configuration:");
+    println!("   Config file: {}", config_path.display());
+    println!("   Watch folder: {}", folder.display());
+    println!("   Folder has proper access permissions");
+    println!();
+    println!("💡 Next steps:");
+    println!("   1. Add destination servers to config if needed");
+    println!("   2. Restart service: sudo systemctl restart uploader");
 
     Ok(())
 }
@@ -1152,283 +1317,4 @@ fn format_size(size: u64) -> String {
     }
 
     format!("{:.2} {}", size, UNITS[unit_idx])
-}
-
-/// Interactive Telegram configuration setup
-fn set_telegram_config(config_path: &Path, custom_success_title: Option<String>) -> Result<()> {
-    use std::io::Write;
-
-    println!("📱 Configure Telegram Notifications for Auto Upload");
-    println!("==============================================");
-    println!();
-
-    // Load existing config
-    let mut config = Config::from_file(config_path)
-        .context("Failed to load config file")?;
-
-    // Check if already configured
-    if config.telegram.enabled {
-        println!("ℹ️  Telegram notifications already configured:");
-        println!("   Bot Token: {}***", &config.telegram.bot_token[..8.min(config.telegram.bot_token.len())]);
-        println!("   Chat ID: {}", config.telegram.chat_id);
-        println!("   Success Title: {}", config.telegram.success_title);
-        println!("   Failure Title: {}", config.telegram.failure_title);
-        println!();
-        print!("Do you want to reconfigure? (y/n): ");
-        io::stdout().flush()?;
-        let mut answer = String::new();
-        io::stdin().read_line(&mut answer)?;
-
-        if !answer.trim().to_lowercase().starts_with('y') {
-            println!("✅ Keeping existing configuration");
-            return Ok(());
-        }
-    }
-
-    println!("🔧 Setting up Telegram Bot...");
-    println!();
-
-    // Get bot token
-    println!("1. 🤖 Bot Token:");
-    println!("   Get your bot token from @BotFather on Telegram");
-    print!("   Enter bot token: ");
-    io::stdout().flush()?;
-    let mut bot_token = String::new();
-    io::stdin().read_line(&mut bot_token)?;
-    let bot_token = bot_token.trim();
-
-    if bot_token.is_empty() {
-        return Err(anyhow::anyhow!("Bot token is required"));
-    }
-
-    // Get chat ID
-    println!();
-    println!("2. 💬 Chat ID:");
-    println!("   For personal chat: Send /start to your bot, then visit:");
-    println!("   https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getUpdates");
-    println!("   For group: Add bot to group, then check getUpdates");
-    print!("   Enter chat ID: ");
-    io::stdout().flush()?;
-    let mut chat_id = String::new();
-    io::stdin().read_line(&mut chat_id)?;
-    let chat_id = chat_id.trim();
-
-    if chat_id.is_empty() {
-        return Err(anyhow::anyhow!("Chat ID is required"));
-    }
-
-    // Get success title or use custom from CLI
-    let success_title = if let Some(custom) = custom_success_title {
-        custom
-    } else {
-        println!();
-        println!("3. 📝 Success Message Title:");
-        println!("   Default: ✅ Upload Berhasil!");
-        print!("   Enter custom title (or press Enter for default): ");
-        io::stdout().flush()?;
-        let mut title = String::new();
-        io::stdin().read_line(&mut title)?;
-        let title = title.trim();
-
-        if title.is_empty() {
-            "✅ Upload Berhasil!".to_string()
-        } else {
-            title.to_string()
-        }
-    };
-
-    // Get failure title
-    println!();
-    println!("4. ⚠️  Failure Message Title:");
-    println!("   Default: ❌ Upload Gagal!");
-    print!("   Enter custom title (or press Enter for default): ");
-    io::stdout().flush()?;
-    let mut title = String::new();
-    io::stdin().read_line(&mut title)?;
-    let title = title.trim();
-
-    let failure_title = if title.is_empty() {
-        "❌ Upload Gagal!".to_string()
-    } else {
-        title.to_string()
-    };
-
-    // Test Telegram connection
-    println!();
-    println!("🧪 Testing Telegram connection...");
-
-    match send_test_telegram_notification(&bot_token, &chat_id, &success_title) {
-        Ok(_) => {
-            println!("✅ Telegram test notification sent successfully!");
-        }
-        Err(e) => {
-            println!("❌ Failed to send test notification: {}", e);
-            println!("   Please check your bot token and chat ID");
-            return Err(e);
-        }
-    }
-
-    // Update config
-    config.telegram.enabled = true;
-    config.telegram.bot_token = bot_token.to_string();
-    config.telegram.chat_id = chat_id.to_string();
-    config.telegram.success_title = success_title;
-    config.telegram.failure_title = failure_title;
-
-    // Save config
-    config.to_file(config_path)?;
-
-    println!();
-    println!("✅ Telegram notifications configured successfully!");
-    println!("📋 Configuration Summary:");
-    println!("   Bot Token: {}***", &bot_token[..8.min(bot_token.len())]);
-    println!("   Chat ID: {}", chat_id);
-    println!("   Success Title: {}", config.telegram.success_title);
-    println!("   Failure Title: {}", config.telegram.failure_title);
-    println!();
-    println!("💡 Next steps:");
-    println!("   1. Restart auto upload service: make autoupload-restart");
-    println!("   2. Add a file to watch folder to test notifications");
-
-    Ok(())
-}
-
-/// Send test Telegram notification
-fn send_test_telegram_notification(bot_token: &str, chat_id: &str, title: &str) -> Result<()> {
-    use serde_json::json;
-
-    let message = format!(
-        "{}\n\n🔧 *Test Notification*\n\n✅ Telegram notifications are working!\n📁 Ready to monitor auto upload status.",
-        title
-    );
-
-    let payload = json!({
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "Markdown"
-    });
-
-    let client = reqwest::blocking::Client::new();
-    let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
-
-    let response = client.post(&url)
-        .header("Content-Type", "application/json")
-        .json(&payload)
-        .send()?;
-
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        let error_text = response.text().unwrap_or_else(|_| "Unknown error".to_string());
-        Err(anyhow::anyhow!("Telegram API error: {}", error_text))
-    }
-}
-
-/// Send auto upload success notification
-pub async fn send_telegram_success_notification(
-    bot_token: &str,
-    chat_id: &str,
-    title: &str,
-    file_path: &Path,
-    file_size: u64,
-    servers: &[String],
-    include_details: bool,
-) -> Result<()> {
-    use serde_json::json;
-
-    let message = if include_details {
-        let file_name = file_path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-
-        let size_formatted = format_size(file_size);
-        let server_list = servers.join(", ");
-
-        format!(
-            "{}\n\n📄 *File Details:*\n📁 Nama: `{}`\n📏 Ukuran: `{}`\n🌐 Server: `{}`\n\n🎉 File berhasil diupload ke semua server!",
-            title,
-            file_name,
-            size_formatted,
-            server_list
-        )
-    } else {
-        format!(
-            "{}\n\n🎉 File berhasil diupload ke server backup!",
-            title
-        )
-    };
-
-    let payload = json!({
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "Markdown"
-    });
-
-    let client = reqwest::Client::new();
-    let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
-
-    let response = client.post(&url)
-        .header("Content-Type", "application/json")
-        .json(&payload)
-        .send()
-        .await?;
-
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-        Err(anyhow::anyhow!("Telegram API error: {}", error_text))
-    }
-}
-
-/// Send auto upload failure notification
-pub async fn send_telegram_failure_notification(
-    bot_token: &str,
-    chat_id: &str,
-    title: &str,
-    file_path: &Path,
-    error_message: &str,
-    include_details: bool,
-) -> Result<()> {
-    use serde_json::json;
-
-    let message = if include_details {
-        let file_name = file_path.file_name()
-            .and_then(|n| n.to_str())
-            .unwrap_or("unknown");
-
-        format!(
-            "{}\n\n📄 *File Details:*\n📁 Nama: `{}`\n\n❌ *Error:*\n```\n{}\n```\n\n⚠️  Silakan periksa koneksi server dan konfigurasi.",
-            title,
-            file_name,
-            error_message
-        )
-    } else {
-        format!(
-            "{}\n\n⚠️  Upload gagal. Silakan periksa log untuk detailnya.",
-            title
-        )
-    };
-
-    let payload = json!({
-        "chat_id": chat_id,
-        "text": message,
-        "parse_mode": "Markdown"
-    });
-
-    let client = reqwest::Client::new();
-    let url = format!("https://api.telegram.org/bot{}/sendMessage", bot_token);
-
-    let response = client.post(&url)
-        .header("Content-Type", "application/json")
-        .json(&payload)
-        .send()
-        .await?;
-
-    if response.status().is_success() {
-        Ok(())
-    } else {
-        let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-        Err(anyhow::anyhow!("Telegram API error: {}", error_text))
-    }
 }

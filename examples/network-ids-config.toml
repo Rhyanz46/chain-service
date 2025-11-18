@@ -1,0 +1,24 @@
+# Network IDs Configuration
+# This file defines the available IDs for node assignment
+
+[available_ids]
+# MainNet IDs for production network
+MainNet-001 = { description = "Primary bootstrap node", reserved = false }
+MainNet-002 = { description = "Secondary worker node", reserved = false }
+MainNet-003 = { description = "Tertiary worker node", reserved = false }
+MainNet-004 = { description = "Fourth worker node", reserved = false }
+MainNet-005 = { description = "Fifth worker node", reserved = false }
+
+# TestNet IDs for testing environment
+TestNet-001 = { description = "Test bootstrap node", reserved = false }
+TestNet-002 = { description = "Test worker node 1", reserved = false }
+TestNet-003 = { description = "Test worker node 2", reserved = false }
+
+# Reserved IDs (cannot be auto-assigned)
+MainNet-ADMIN = { description = "Network administrator", reserved = true }
+TestNet-ADMIN = { description = "Test network administrator", reserved = true }
+
+# DevNet IDs for development
+DevNet-001 = { description = "Development bootstrap", reserved = false }
+DevNet-002 = { description = "Development worker", reserved = false }
+DevNet-003 = { description = "Development test node", reserved = true }
